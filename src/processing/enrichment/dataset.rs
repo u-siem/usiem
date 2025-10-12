@@ -2,7 +2,7 @@
 //!
 //! This module provides the core dataset implementations for the enrichment system:
 //!
-//! - [`TypedDataset<K,V>`] - Hash-map based datasets for key-value lookups
+//! - [`MapDataset<K,V>`] - Hash-map based datasets for key-value lookups
 //! - [`NetworkDataset<V>`] - Trait for IP network-based datasets  
 //! - [`NetworkTypedDataset<V,U>`] - Wrapper for network datasets in the system
 //! - [`DatasetUpdate<K,V>`] - Update operations for modifying dataset contents
@@ -28,7 +28,7 @@
 //!
 //! # Network vs Key-Value Datasets
 //!
-//! * **Key-Value** (`TypedDataset`) - Direct hash-map lookups, O(1) access time
+//! * **Key-Value** (`MapDataset`) - Direct hash-map lookups, O(1) access time
 //! * **Network** (`NetworkDataset`) - IP range lookups, variable access time based on implementation
 
 use crate::processing::enrichment::core::AnyDataset;
@@ -74,7 +74,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 ///
 /// ```rust,no_compile,no_run
 /// // Create a new GeoIP dataset
-/// let (geo_dataset, receiver) = TypedDataset::<Ip, GeoIp>::new();
+/// let (geo_dataset, receiver) = MapDataset::<Ip, GeoIp>::new();
 ///
 /// // Look up geographic information
 /// if let Some(geo_info) = geo_dataset.get(&ip_address) {
@@ -89,7 +89,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 /// geo_dataset.send_update(update).unwrap();
 /// ```
 #[derive(Clone, Debug)]
-pub struct TypedDataset<K, V>
+pub struct MapDataset<K, V>
 where
     K: Clone + Send + Sync + Eq + Hash + 'static,
     V: Clone + Send + Sync + 'static,
@@ -104,7 +104,7 @@ where
 /// Update operations for typed datasets
 ///
 /// This enum defines all possible update operations that can be applied to
-/// a `TypedDataset<K,V>`. All operations follow the immutability principle
+/// a `MapDataset<K,V>`. All operations follow the immutability principle
 /// and result in new dataset instances rather than in-place modifications.
 ///
 /// # Operation Types
@@ -177,7 +177,7 @@ pub enum DatasetUpdate<K, V> {
     Clear,
 }
 
-impl<K, V> TypedDataset<K, V>
+impl<K, V> MapDataset<K, V>
 where
     K: Clone + Send + Sync + Eq + Hash + 'static,
     V: Clone + Send + Sync + 'static,
@@ -311,7 +311,7 @@ where
     }
 }
 
-impl<K, V> AnyDataset for TypedDataset<K, V>
+impl<K, V> AnyDataset for MapDataset<K, V>
 where
     K: Clone + Send + Sync + Eq + Hash + 'static,
     V: Clone + Send + Sync + 'static,
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_typed_dataset_new() {
-        let (dataset, receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, receiver) = MapDataset::<Text, String>::new();
 
         // Test that the dataset starts empty
         assert!(dataset.is_empty());
@@ -852,7 +852,7 @@ mod tests {
         initial_data.insert(Text::from("key1"), "value1".to_string());
         initial_data.insert(Text::from("key2"), "value2".to_string());
 
-        let dataset = TypedDataset::with_data(initial_data.clone());
+        let dataset = MapDataset::with_data(initial_data.clone());
 
         assert!(!dataset.is_empty());
         assert_eq!(dataset.len(), 2);
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_dataset_apply_updates() {
-        let (dataset, _receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, _receiver) = MapDataset::<Text, String>::new();
 
         // Test Set update
         let set_update = DatasetUpdate::Set {
@@ -951,7 +951,7 @@ mod tests {
 
     #[test]
     fn test_dataset_batch_updates() {
-        let (dataset, _receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, _receiver) = MapDataset::<Text, String>::new();
 
         let updates = vec![
             DatasetUpdate::Set {
@@ -994,7 +994,7 @@ mod tests {
         initial_data.insert(Text::from("key1"), "value1".to_string());
         initial_data.insert(Text::from("key2"), "value2".to_string());
 
-        let dataset = TypedDataset::with_data(initial_data);
+        let dataset = MapDataset::with_data(initial_data);
         assert_eq!(dataset.len(), 2);
 
         let clear_update = DatasetUpdate::Clear;
@@ -1009,7 +1009,7 @@ mod tests {
         let mut initial_data = HashMap::new();
         initial_data.insert(Text::from("old_key"), "old_value".to_string());
 
-        let dataset = TypedDataset::with_data(initial_data);
+        let dataset = MapDataset::with_data(initial_data);
         assert_eq!(dataset.len(), 1);
 
         let mut new_data = HashMap::new();
@@ -1033,19 +1033,19 @@ mod tests {
 
     #[test]
     fn test_any_dataset_implementation() {
-        let (dataset, _receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, _receiver) = MapDataset::<Text, String>::new();
 
         // Test type_name
         assert_eq!(
             dataset.type_name(),
-            std::any::type_name::<TypedDataset<Text, String>>()
+            std::any::type_name::<MapDataset<Text, String>>()
         );
 
         // Test as_any and downcasting
         let any_dataset: &dyn AnyDataset = &dataset;
         let recovered = any_dataset
             .as_any()
-            .downcast_ref::<TypedDataset<Text, String>>();
+            .downcast_ref::<MapDataset<Text, String>>();
         assert!(recovered.is_some());
 
         // Test clone_box

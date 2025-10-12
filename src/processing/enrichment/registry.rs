@@ -52,13 +52,13 @@ impl EnrichmentRegistry {
 mod tests {
     use super::*;
     use crate::event::field::Text;
-    use crate::processing::enrichment::dataset::TypedDataset;
+    use crate::processing::enrichment::dataset::MapDataset;
 
     // Test key implementation
     struct TestDatasetKey;
 
     impl DatasetKey for TestDatasetKey {
-        type Dataset = TypedDataset<Text, String>;
+        type Dataset = MapDataset<Text, String>;
         type Key = Text;
         type Value = String;
         const NAME: &'static str = "test_dataset";
@@ -74,7 +74,7 @@ mod tests {
     fn test_registry_register() {
         let mut registry = EnrichmentRegistry::new();
 
-        let (dataset, _receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, _receiver) = MapDataset::<Text, String>::new();
 
         registry.register::<TestDatasetKey>(dataset);
 
@@ -88,19 +88,19 @@ mod tests {
         let mut registry = EnrichmentRegistry::new();
 
         // Register first dataset
-        let (dataset1, _receiver1) = TypedDataset::<Text, String>::new();
+        let (dataset1, _receiver1) = MapDataset::<Text, String>::new();
         registry.register::<TestDatasetKey>(dataset1);
 
         // Create second key type for testing
         struct SecondTestKey;
         impl DatasetKey for SecondTestKey {
-            type Dataset = TypedDataset<Text, i32>;
+            type Dataset = MapDataset<Text, i32>;
             type Key = Text;
             type Value = i32;
             const NAME: &'static str = "second_dataset";
         }
 
-        let (dataset2, _receiver2) = TypedDataset::<Text, i32>::new();
+        let (dataset2, _receiver2) = MapDataset::<Text, i32>::new();
         registry.register::<SecondTestKey>(dataset2);
 
         let names = registry.dataset_names();
@@ -113,7 +113,7 @@ mod tests {
     fn test_registry_get_datasets() {
         let mut registry = EnrichmentRegistry::new();
 
-        let (dataset, _receiver) = TypedDataset::<Text, String>::new();
+        let (dataset, _receiver) = MapDataset::<Text, String>::new();
         registry.register::<TestDatasetKey>(dataset);
 
         let datasets = registry.get_datasets();
@@ -123,7 +123,7 @@ mod tests {
         let retrieved_dataset = datasets.get("test_dataset").unwrap();
         assert_eq!(
             retrieved_dataset.type_name(),
-            std::any::type_name::<TypedDataset<Text, String>>()
+            std::any::type_name::<MapDataset<Text, String>>()
         );
     }
 
@@ -132,11 +132,11 @@ mod tests {
         let mut registry = EnrichmentRegistry::new();
 
         // Register first dataset
-        let (dataset1, _receiver1) = TypedDataset::<Text, String>::new();
+        let (dataset1, _receiver1) = MapDataset::<Text, String>::new();
         registry.register::<TestDatasetKey>(dataset1);
 
         // Register another dataset with same key (should overwrite)
-        let (dataset2, _receiver2) = TypedDataset::<Text, String>::new();
+        let (dataset2, _receiver2) = MapDataset::<Text, String>::new();
         registry.register::<TestDatasetKey>(dataset2);
 
         let names = registry.dataset_names();

@@ -35,7 +35,7 @@
 //! use usiem::processing::enrichment::*;
 //!
 //! // Create a dataset for user information
-//! let (user_dataset, _receiver) = TypedDataset::<Text, UserProfile>::new();
+//! let (user_dataset, _receiver) = MapDataset::<Text, UserProfile>::new();
 //!
 //! // Look up user information
 //! if let Some(user_info) = user_dataset.get(&username) {
@@ -89,13 +89,13 @@ pub use core::{AnyDataset, DatasetKey, EnrichmentError};
 pub use dataset::{
     DatasetUpdate,
     IpNetwork,
+    MapDataset,
     // Network dataset framework
     NetworkDataset,
     NetworkDatasetStats,
     NetworkError,
     NetworkTypedDataset,
     NetworkUpdate,
-    TypedDataset,
 };
 pub use keys::{AssetKey, GeoIpKey, ThreatIpKey, UserKey};
 pub use manager::{

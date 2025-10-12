@@ -24,7 +24,7 @@ use std::any::Any;
 ///
 /// # Type Parameters
 ///
-/// * `Dataset` - The concrete dataset implementation (e.g., `TypedDataset<K,V>`)
+/// * `Dataset` - The concrete dataset implementation (e.g., `MapDataset<K,V>`)
 /// * `Key` - The type used to look up values (e.g., `Ip`, `Text`)  
 /// * `Value` - The enrichment data type (e.g., `GeoIp`, `ThreatInfo`)
 ///
@@ -34,7 +34,7 @@ use std::any::Any;
 /// pub struct GeoIpKey;
 ///
 /// impl DatasetKey for GeoIpKey {
-///     type Dataset = TypedDataset<Ip, GeoIp>;
+///     type Dataset = MapDataset<Ip, GeoIp>;
 ///     type Key = Ip;
 ///     type Value = GeoIp;
 ///     const NAME: &'static str = "geoip";
@@ -43,7 +43,7 @@ use std::any::Any;
 pub trait DatasetKey: 'static + Send + Sync {
     /// The dataset type associated with this key
     ///
-    /// This should be a concrete implementation like `TypedDataset<K,V>` or
+    /// This should be a concrete implementation like `MapDataset<K,V>` or
     /// `NetworkTypedDataset<V,U>` that can store and retrieve the enrichment data.
     type Dataset: AnyDataset + 'static;
 
@@ -159,7 +159,7 @@ pub trait AnyDataset: Send + Sync {
     ///
     /// ```rust,no_compile,no_run
     /// if let Some(typed_dataset) = any_dataset.as_any()
-    ///     .downcast_ref::<TypedDataset<Ip, GeoIp>>() {
+    ///     .downcast_ref::<MapDataset<Ip, GeoIp>>() {
     ///     // Access typed methods
     ///     let geo_data = typed_dataset.get(&ip_addr);
     /// }

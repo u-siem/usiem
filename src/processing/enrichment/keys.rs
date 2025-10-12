@@ -2,7 +2,7 @@
 
 use crate::event::field::{Ip, Text};
 use crate::processing::enrichment::core::DatasetKey;
-use crate::processing::enrichment::dataset::TypedDataset;
+use crate::processing::enrichment::dataset::MapDataset;
 use crate::processing::enrichment::types::{AssetInfo, GeoIp, ThreatInfo, UserProfile};
 
 /// Key type for GeoIP dataset
@@ -11,7 +11,7 @@ pub struct GeoIpKey;
 impl DatasetKey for GeoIpKey {
     type Key = Ip;
     type Value = GeoIp;
-    type Dataset = TypedDataset<Ip, GeoIp>;
+    type Dataset = MapDataset<Ip, GeoIp>;
 
     const NAME: &'static str = "geoip";
 }
@@ -22,7 +22,7 @@ pub struct ThreatIpKey;
 impl DatasetKey for ThreatIpKey {
     type Key = Ip;
     type Value = ThreatInfo;
-    type Dataset = TypedDataset<Ip, ThreatInfo>;
+    type Dataset = MapDataset<Ip, ThreatInfo>;
 
     const NAME: &'static str = "threat_ip";
 }
@@ -33,7 +33,7 @@ pub struct AssetKey;
 impl DatasetKey for AssetKey {
     type Key = Text;
     type Value = AssetInfo;
-    type Dataset = TypedDataset<Text, AssetInfo>;
+    type Dataset = MapDataset<Text, AssetInfo>;
 
     const NAME: &'static str = "assets";
 }
@@ -44,7 +44,7 @@ pub struct UserKey;
 impl DatasetKey for UserKey {
     type Key = Text;
     type Value = UserProfile;
-    type Dataset = TypedDataset<Text, UserProfile>;
+    type Dataset = MapDataset<Text, UserProfile>;
 
     const NAME: &'static str = "users";
 }

@@ -2,7 +2,7 @@
 
 use crate::event::field::{Ip, Text};
 use crate::processing::enrichment::core::{AnyDataset, EnrichmentError};
-use crate::processing::enrichment::dataset::TypedDataset;
+use crate::processing::enrichment::dataset::MapDataset;
 use crate::processing::enrichment::registry::EnrichmentRegistry;
 use crate::processing::enrichment::types::{AssetInfo, GeoIp, ThreatInfo, UserProfile};
 use std::collections::VecDeque;
@@ -73,7 +73,7 @@ where
     /// Name of the dataset
     pub name: &'static str,
     /// Current strongly-typed dataset
-    pub current_dataset: Arc<TypedDataset<K, V>>,
+    pub current_dataset: Arc<MapDataset<K, V>>,
     /// Queue of pending updates to be merged
     pub queued_updates: VecDeque<crate::processing::enrichment::dataset::DatasetUpdate<K, V>>,
     /// Last time this dataset was merged
@@ -207,11 +207,11 @@ impl DatasetBuilder {
         V: Clone + Send + Sync + 'static,
     {
         let (dataset, receiver) = if let Some(data) = initial_data {
-            let (_empty_dataset, receiver) = TypedDataset::new();
-            let dataset = TypedDataset::with_data(data);
+            let (_empty_dataset, receiver) = MapDataset::new();
+            let dataset = MapDataset::with_data(data);
             (dataset, receiver)
         } else {
-            TypedDataset::new()
+            MapDataset::new()
         };
 
         // Create managed dataset entry
@@ -343,7 +343,7 @@ impl EnrichmentManager {
     }
 
     /// Get a dataset sender for external updates
-    pub fn get_dataset_handle<K, V>(&self, _dataset_name: &str) -> Option<TypedDataset<K, V>>
+    pub fn get_dataset_handle<K, V>(&self, _dataset_name: &str) -> Option<MapDataset<K, V>>
     where
         K: Clone + Send + Sync + std::cmp::Eq + std::hash::Hash + 'static,
         V: Clone + Send + Sync + 'static,
