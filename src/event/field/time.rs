@@ -1,17 +1,17 @@
 /// Specialized time field wrapping i64 nanoseconds since Unix epoch (UTC)
-/// 
+///
 /// All timestamps in the SIEM system are stored and handled in UTC to ensure
 /// consistent time handling across different systems, timezones, and log sources.
-/// 
+///
 /// # UTC Guarantees
-/// 
+///
 /// - **Storage**: Always nanoseconds since Unix epoch (1970-01-01T00:00:00Z)
 /// - **Parsing**: Input with timezone offsets is converted to UTC
 /// - **Output**: Always rendered in UTC unless explicitly converted
 /// - **Arithmetic**: All operations preserve UTC semantics
-/// 
+///
 /// # Design Rationale
-/// 
+///
 /// SIEM systems must correlate events from multiple sources across different
 /// timezones. By normalizing all timestamps to UTC, we ensure:
 /// - Accurate event ordering and correlation
@@ -70,7 +70,7 @@ impl Timestamp {
     }
 
     /// Create from RFC3339 string (e.g., "2025-10-11T10:30:00Z")
-    /// 
+    ///
     /// Input timestamps with timezone offsets are automatically converted to UTC.
     /// Examples:
     /// - "2025-10-11T10:30:00Z" → UTC timestamp
@@ -90,7 +90,7 @@ impl Timestamp {
     }
 
     /// Convert to RFC3339 string in UTC timezone
-    /// 
+    ///
     /// Always outputs timestamps with 'Z' suffix indicating UTC.
     /// Example: "2025-10-11T10:30:00.123456789Z"
     pub fn to_rfc3339(&self) -> String {
@@ -207,8 +207,11 @@ impl Timestamp {
         match OffsetDateTime::from_unix_timestamp_nanos(nanos_i128) {
             Ok(dt) => {
                 let utc_dt = dt.to_offset(UtcOffset::UTC);
-                if let Ok(format) = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second] UTC") {
-                    utc_dt.format(&format)
+                if let Ok(format) = format_description::parse_borrowed::<1>(
+                    "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
+                ) {
+                    utc_dt
+                        .format(&format)
                         .unwrap_or_else(|_| format!("Timestamp({}ns)", self.0))
                 } else {
                     self.to_rfc3339() // fallback
@@ -224,7 +227,7 @@ impl Timestamp {
         // This catches obvious errors like microsecond timestamps being used as nanoseconds
         let min_reasonable = 0; // 1970-01-01T00:00:00Z
         let max_reasonable = 4_102_444_800_000_000_000i64; // ~2100-01-01T00:00:00Z in nanos
-        
+
         self.0 >= min_reasonable && self.0 <= max_reasonable
     }
 }
@@ -347,7 +350,7 @@ mod tests {
         let ts2 = ts1 + 500_000_000; // Add 0.5 seconds in nanoseconds
 
         assert_eq!(ts2.as_secs(), 1000);
-        assert_eq!(ts2.as_nanos(), 1000_500_000_000);
+        assert_eq!(ts2.as_nanos(), 1_000_500_000_000);
 
         let duration = ts2 - ts1;
         assert_eq!(duration, 500_000_000);
@@ -378,17 +381,21 @@ mod tests {
     fn test_utc_timezone_handling() {
         // Test that timezone offsets are properly converted to UTC
         let test_cases = [
-            "2025-10-11T10:30:00Z",     // Already UTC
+            "2025-10-11T10:30:00Z",      // Already UTC
             "2025-10-11T10:30:00+00:00", // +00:00 = UTC
         ];
 
         for input in &test_cases {
             let ts = Timestamp::from_rfc3339(input).expect("Should parse");
             let output = ts.to_rfc3339();
-            
+
             // Verify it's in UTC (ends with Z)
-            assert!(output.ends_with('Z'), "Output should end with Z: {}", output);
-            
+            assert!(
+                output.ends_with('Z'),
+                "Output should end with Z: {}",
+                output
+            );
+
             // Verify it contains the expected time components
             assert!(output.contains("2025-10-11"), "Should contain date");
             assert!(output.contains("10:30:00"), "Should contain time");
@@ -406,24 +413,29 @@ mod tests {
         for (input, expected_hour, expected_minute) in &cases {
             let ts = Timestamp::from_rfc3339(input).expect("Should parse timezone offset");
             let output = ts.to_rfc3339();
-            
+
             // Verify conversion to UTC
             assert!(output.ends_with('Z'), "Should convert to UTC");
-            
+
             let time_part = format!("{:02}:{:02}", expected_hour, expected_minute);
-            assert!(output.contains(&time_part), 
-                "Expected {} to contain {}, got {}", input, time_part, output);
+            assert!(
+                output.contains(&time_part),
+                "Expected {} to contain {}, got {}",
+                input,
+                time_part,
+                output
+            );
         }
     }
 
     #[test]
     fn test_utc_helper_methods() {
         let ts = Timestamp::utc_now();
-        
+
         // Test UTC string formatting
         let utc_str = ts.to_utc_string();
         assert!(utc_str.contains("UTC") || utc_str.starts_with("Timestamp("));
-        
+
         // Test UTC RFC3339 alias
         let rfc3339_1 = ts.to_rfc3339();
         let rfc3339_2 = ts.to_utc_rfc3339();
@@ -438,22 +450,29 @@ mod tests {
             Timestamp::from_secs(1893456000), // 2030-01-01
             Timestamp::utc_now(),
         ];
-        
+
         for ts in &reasonable_cases {
-            assert!(ts.is_reasonable_siem_timestamp(), 
-                "Should be reasonable: {}", ts.as_secs());
+            assert!(
+                ts.is_reasonable_siem_timestamp(),
+                "Should be reasonable: {}",
+                ts.as_secs()
+            );
         }
-        
-        // Unreasonable timestamps  
+
+        // Unreasonable timestamps
         let unreasonable_cases = [
-            Timestamp::from_secs(5000000000),      // Year ~2128 = too far future  
-            Timestamp::from_nanos(-1),             // Before epoch
+            Timestamp::from_secs(5000000000), // Year ~2128 = too far future
+            Timestamp::from_nanos(-1),        // Before epoch
         ];
-        
+
         for (i, ts) in unreasonable_cases.iter().enumerate() {
-            assert!(!ts.is_reasonable_siem_timestamp(),
-                "Case {}: Should be unreasonable: {} seconds = {} nanos", 
-                i, ts.as_secs(), ts.as_nanos());
+            assert!(
+                !ts.is_reasonable_siem_timestamp(),
+                "Case {}: Should be unreasonable: {} seconds = {} nanos",
+                i,
+                ts.as_secs(),
+                ts.as_nanos()
+            );
         }
     }
 }

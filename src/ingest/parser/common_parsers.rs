@@ -1,17 +1,27 @@
 use crate::event::RawEvent;
 #[cfg(feature = "json")]
+use crate::event::field::FieldValue;
+#[cfg(feature = "json")]
+use crate::event::field::Text;
+use crate::event::field::Timestamp;
+#[cfg(feature = "json")]
 use crate::ingest::parser::err::ParsingError;
 use crate::ingest::parser::{LogParser, result::ParseResult};
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// Common log format parsers for standard formats
+// Common log format parsers for standard formats
 
 // Static regex patterns for maximum performance
 static APACHE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\d+) (\S+)(?: "([^"]*)" "([^"]*)")?$"#)
         .expect("Invalid Apache log regex")
 });
+
+// Format: 25/Dec/2023:10:00:00 +0000
+const APACHE_TIME_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] = time::macros::format_description!(
+    "[day]/[month repr:short]/[year]:[hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]"
+);
 
 /// Apache Combined Log Format parser function
 /// Example: 127.0.0.1 - - [25/Dec/2023:10:00:00 +0000] "GET / HTTP/1.1" 200 2326 "http://example.com" "Mozilla/5.0"
@@ -30,7 +40,12 @@ pub fn parse_apache_common(mut raw_event: RawEvent) -> ParseResult {
         let referer = captures.get(8).map(|m| m.as_str().to_string());
         let user_agent = captures.get(9).map(|m| m.as_str().to_string());
 
-        // TODO: Parse timestamp from captures[4] and set raw_event.timestamp
+        let timestamp_str = captures.get(4).unwrap().as_str();
+        if let Ok(dt) = time::OffsetDateTime::parse(timestamp_str, APACHE_TIME_FORMAT)
+            && let Ok(nanos) = dt.unix_timestamp_nanos().try_into()
+        {
+            raw_event.original_time = Timestamp::from_nanos(nanos);
+        }
 
         // Set event type and extract fields
         raw_event.insert_field("event_type", "web_access".to_string());
@@ -65,41 +80,73 @@ pub fn apache_common_parser() -> LogParser {
     )
 }
 
+/// Recursively converts a `serde_json::Value` into a [`FieldValue`], preserving
+/// nested objects/arrays as `FieldValue::Object`/`Array` instead of
+/// stringifying them — `FieldValue` supports arbitrary nesting natively, so
+/// there's no need to flatten. JSON `null` has no `FieldValue` equivalent (the
+/// type has no `Null` variant, only "field absent"), so null-valued object
+/// fields and null array elements are dropped rather than becoming the
+/// literal string `"null"`.
+#[cfg(feature = "json")]
+fn json_value_to_field_value(value: serde_json::Value) -> Option<FieldValue> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(b) => Some(FieldValue::Bool(b)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(FieldValue::Int(i))
+            } else if let Some(u) = n.as_u64() {
+                Some(FieldValue::Uint(u))
+            } else {
+                n.as_f64().map(FieldValue::Float)
+            }
+        }
+        serde_json::Value::String(s) => Some(FieldValue::Str(Text::from(s))),
+        serde_json::Value::Array(arr) => Some(FieldValue::Array(
+            arr.into_iter()
+                .filter_map(json_value_to_field_value)
+                .collect(),
+        )),
+        serde_json::Value::Object(map) => Some(FieldValue::Object(
+            map.into_iter()
+                .filter_map(|(k, v)| json_value_to_field_value(v).map(|fv| (Text::from(k), fv)))
+                .collect(),
+        )),
+    }
+}
+
 /// JSON log parser function for structured logs
 #[cfg(feature = "json")]
 pub fn parse_json(mut raw_event: RawEvent) -> ParseResult {
     match serde_json::from_str::<serde_json::Value>(raw_event.log_text.trim()) {
         Ok(json) => {
             // Set event type from JSON or default to "json_log"
-            raw_event.event_type = json
+            let event_type = json
                 .get("event_type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("json_log")
                 .to_string();
 
-            // TODO: Extract timestamp from JSON if present and set raw_event.timestamp
+            // Extract timestamp from a "timestamp" or "@timestamp" field if present and parseable
+            let parsed_timestamp = json
+                .get("timestamp")
+                .or_else(|| json.get("@timestamp"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| Timestamp::from_rfc3339(s).ok());
 
-            // Flatten JSON into dot-notation fields
+            if let Some(ts) = parsed_timestamp {
+                raw_event.original_time = ts;
+            }
+
+            raw_event.insert_field("event_type", event_type);
+
+            // Convert top-level JSON keys into fields, recursing into nested
+            // objects/arrays as FieldValue::Object/Array (see
+            // json_value_to_field_value) instead of stringifying them.
             if let serde_json::Value::Object(map) = json {
                 for (key, value) in map {
-                    match value {
-                        serde_json::Value::String(s) => {
-                            raw_event.insert_field(key, s);
-                        }
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                raw_event.insert_field(key, i);
-                            } else if let Some(f) = n.as_f64() {
-                                raw_event.insert_field(key, f);
-                            }
-                        }
-                        serde_json::Value::Bool(b) => {
-                            raw_event.insert_field(key, b);
-                        }
-                        _ => {
-                            // For complex objects, store as string
-                            raw_event.insert_field(key, value.to_string());
-                        }
+                    if let Some(field_value) = json_value_to_field_value(value) {
+                        raw_event.insert_field(key, field_value);
                     }
                 }
             }
@@ -129,25 +176,33 @@ static WINDOWS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Invalid Windows Event Log regex")
 });
 
+// Format: 2023-12-25 10:00:00.000 (no timezone in this format — treated as UTC)
+const WINDOWS_TIME_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] = time::macros::format_description!(
+    "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+);
+
 /// Windows Event Log format parser function
 /// Example: 2023-12-25 10:00:00.000 [Information] Event ID: 4624 - An account was successfully logged on
 pub fn parse_windows_event(mut raw_event: RawEvent) -> ParseResult {
     // Check if the log matches the Windows Event Log pattern
     let parsed_fields = {
         let log_text = &raw_event.log_text;
-        if let Some(captures) = WINDOWS_REGEX.captures(log_text) {
-            Some((
+        WINDOWS_REGEX.captures(log_text).map(|captures| {
+            (
+                captures.get(1).unwrap().as_str().to_string(),
                 captures.get(2).unwrap().as_str().to_string(),
                 captures.get(3).unwrap().as_str().to_string(),
                 captures.get(4).unwrap().as_str().to_string(),
-            ))
-        } else {
-            None
-        }
+            )
+        })
     };
 
-    if let Some((log_level, event_id_str, message)) = parsed_fields {
-        // TODO: Parse timestamp from first capture group and set raw_event.timestamp
+    if let Some((timestamp_str, log_level, event_id_str, message)) = parsed_fields {
+        if let Ok(dt) = time::PrimitiveDateTime::parse(&timestamp_str, WINDOWS_TIME_FORMAT)
+            && let Ok(nanos) = dt.assume_utc().unix_timestamp_nanos().try_into()
+        {
+            raw_event.original_time = Timestamp::from_nanos(nanos);
+        }
 
         // Set event type and process fields
         raw_event.insert_field("event_type", "windows_event".to_string());
@@ -176,6 +231,92 @@ pub fn windows_event_parser() -> LogParser {
     )
 }
 
+// Static regex for the CEF header: `CEF:Version|Vendor|Product|Version|ClassId|Name|Severity|Extension`
+static CEF_HEADER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^CEF:(\d+)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|(.*)$")
+        .expect("Invalid CEF header regex")
+});
+
+// Matches an extension key (`key=`) so values containing spaces can be
+// recovered as "everything up to the next key=".
+static CEF_EXTENSION_KEY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([A-Za-z0-9_.]+)=").expect("Invalid CEF extension key regex"));
+
+/// Parse a CEF extension (`key1=value1 key2=value2 ...`) into key/value pairs.
+///
+/// CEF values may contain spaces, so a plain `split_whitespace` would break
+/// on multi-word values (e.g. `msg=connection refused`). Instead, each
+/// value is taken as everything between one `key=` match and the next.
+fn parse_cef_extension(extension: &str) -> Vec<(String, String)> {
+    let matches: Vec<_> = CEF_EXTENSION_KEY_REGEX.find_iter(extension).collect();
+    let mut pairs = Vec::with_capacity(matches.len());
+
+    for (i, m) in matches.iter().enumerate() {
+        let key = &extension[m.start()..m.end() - 1]; // strip the trailing '='
+        let value_start = m.end();
+        let value_end = matches
+            .get(i + 1)
+            .map(|next| next.start())
+            .unwrap_or(extension.len());
+        let value = extension[value_start..value_end].trim();
+        pairs.push((key.to_string(), value.to_string()));
+    }
+
+    pairs
+}
+
+/// Common Event Format (CEF) parser function
+/// Example: CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=10.0.0.2 dst=2.1.2.2 act=blocked
+pub fn parse_cef(mut raw_event: RawEvent) -> ParseResult {
+    if let Some(captures) = CEF_HEADER_REGEX.captures(raw_event.log_text.trim()) {
+        let version = captures.get(1).unwrap().as_str().to_string();
+        let device_vendor = captures.get(2).unwrap().as_str().to_string();
+        let device_product = captures.get(3).unwrap().as_str().to_string();
+        let device_version = captures.get(4).unwrap().as_str().to_string();
+        let device_event_class_id = captures.get(5).unwrap().as_str().to_string();
+        let name = captures.get(6).unwrap().as_str().to_string();
+        let severity = captures.get(7).unwrap().as_str().to_string();
+        let extension_pairs = parse_cef_extension(captures.get(8).unwrap().as_str());
+
+        // CEF's `rt` extension field (receipt time) is epoch milliseconds when numeric.
+        if let Some((_, rt)) = extension_pairs.iter().find(|(k, _)| k == "rt")
+            && let Ok(millis) = rt.parse::<i64>()
+        {
+            raw_event.original_time = Timestamp::from_millis(millis);
+        }
+
+        raw_event.insert_field("event_type", "cef".to_string());
+        raw_event.insert_field("cef.version", version);
+        raw_event.insert_field("cef.device_vendor", device_vendor);
+        raw_event.insert_field("cef.device_product", device_product);
+        raw_event.insert_field("cef.device_version", device_version);
+        raw_event.insert_field("cef.device_event_class_id", device_event_class_id);
+        raw_event.insert_field("cef.name", name);
+        if let Ok(severity_num) = severity.parse::<i64>() {
+            raw_event.insert_field("cef.severity", severity_num);
+        }
+
+        for (key, value) in extension_pairs {
+            raw_event.insert_field(format!("cef.extension.{}", key), value);
+        }
+
+        let event = raw_event.into_event();
+        ParseResult::Success(event)
+    } else {
+        ParseResult::NoMatch(raw_event)
+    }
+}
+
+/// Create CEF (Common Event Format) parser
+pub fn cef_parser() -> LogParser {
+    LogParser::new(
+        "cef",
+        "Common Event Format (CEF)",
+        "Parses ArcSight Common Event Format (CEF) log entries",
+        parse_cef,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +338,10 @@ mod tests {
                     event.fields.get("client.ip").unwrap().as_str().unwrap(),
                     "127.0.0.1"
                 );
+                assert_eq!(
+                    event.original_time(),
+                    Timestamp::from_rfc3339("2023-12-25T10:00:00Z").unwrap()
+                );
             }
             _ => panic!("Expected successful parse"),
         }
@@ -213,9 +358,173 @@ mod tests {
             ParseResult::Success(event) => {
                 assert_eq!(event.fields.get("level").unwrap().as_str().unwrap(), "info");
                 assert_eq!(event.fields.get("user").unwrap().as_str().unwrap(), "alice");
+                assert_eq!(
+                    event.original_time(),
+                    Timestamp::from_rfc3339("2023-12-25T10:00:00Z").unwrap()
+                );
             }
             _ => panic!("Expected successful parse"),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn test_json_parser_recurses_into_nested_objects_and_arrays() {
+        let parser = json_parser();
+        let log = r#"{
+            "user": {"id": 123, "name": "alice"},
+            "tags": ["suspicious", 42, true]
+        }"#;
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "app.log"));
+        match result {
+            ParseResult::Success(event) => {
+                match event.fields.get("user") {
+                    Some(FieldValue::Object(user)) => {
+                        assert_eq!(user.get("id").and_then(|v| v.as_i64()), Some(123));
+                        assert_eq!(user.get("name").and_then(|v| v.as_str()), Some("alice"));
+                    }
+                    other => panic!("expected user to be a nested Object, got {other:?}"),
+                }
+
+                match event.fields.get("tags") {
+                    Some(FieldValue::Array(tags)) => {
+                        assert_eq!(tags.len(), 3);
+                        assert_eq!(tags[0].as_str(), Some("suspicious"));
+                        assert_eq!(tags[1].as_i64(), Some(42));
+                        assert_eq!(tags[2].as_bool(), Some(true));
+                    }
+                    other => panic!("expected tags to be an Array, got {other:?}"),
+                }
+            }
+            other => panic!("Expected successful parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn test_json_parser_drops_nulls_instead_of_stringifying() {
+        let parser = json_parser();
+        let log = r#"{"user": "alice", "session_id": null, "meta": {"note": null, "kept": 1}}"#;
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "app.log"));
+        match result {
+            ParseResult::Success(event) => {
+                assert!(!event.fields.contains_key("session_id"));
+
+                match event.fields.get("meta") {
+                    Some(FieldValue::Object(meta)) => {
+                        assert!(!meta.contains_key("note"));
+                        assert_eq!(meta.get("kept").and_then(|v| v.as_i64()), Some(1));
+                    }
+                    other => panic!("expected meta to be a nested Object, got {other:?}"),
+                }
+            }
+            other => panic!("Expected successful parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn test_json_parser_large_u64_does_not_lose_precision_to_f64() {
+        let parser = json_parser();
+        // Larger than i64::MAX but fits u64 — previously fell through to f64
+        // (as_i64() -> None, then as_f64() -> lossy), since the old code
+        // never tried as_u64() at all.
+        let log = r#"{"big_id": 18446744073709551615}"#;
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "app.log"));
+        match result {
+            ParseResult::Success(event) => {
+                assert_eq!(
+                    event.fields.get("big_id").and_then(|v| v.as_u64()),
+                    Some(u64::MAX)
+                );
+            }
+            other => panic!("Expected successful parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cef_parser() {
+        let parser = cef_parser();
+        let log = "CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=10.0.0.2 dst=2.1.2.2 act=blocked cs1Label=Message cs1=Detected worm";
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "cef.log"));
+        match result {
+            ParseResult::Success(event) => {
+                assert_eq!(
+                    event.fields.get("event_type").unwrap().as_str().unwrap(),
+                    "cef"
+                );
+                assert_eq!(
+                    event
+                        .fields
+                        .get("cef.device_vendor")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "Security"
+                );
+                assert_eq!(
+                    event
+                        .fields
+                        .get("cef.device_product")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "threatmanager"
+                );
+                assert_eq!(
+                    event.fields.get("cef.severity").unwrap().as_i64().unwrap(),
+                    10
+                );
+                assert_eq!(
+                    event
+                        .fields
+                        .get("cef.extension.src")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "10.0.0.2"
+                );
+                // "Detected worm" contains a space; the extension parser must
+                // not truncate it at the first space.
+                assert_eq!(
+                    event
+                        .fields
+                        .get("cef.extension.cs1")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "Detected worm"
+                );
+            }
+            other => panic!("Expected successful parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cef_parser_extracts_receipt_time() {
+        let parser = cef_parser();
+        let log = "CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|rt=1382967645000 src=10.0.0.2";
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "cef.log"));
+        match result {
+            ParseResult::Success(event) => {
+                assert_eq!(event.original_time(), Timestamp::from_millis(1382967645000));
+            }
+            other => panic!("Expected successful parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cef_parser_no_match_on_non_cef_log() {
+        let parser = cef_parser();
+        let log = "not a cef log line";
+
+        let result = (parser.parse_fn)(RawEvent::from_log(log, "cef.log"));
+        assert!(matches!(result, ParseResult::NoMatch(_)));
     }
 
     #[test]

@@ -1,9 +1,10 @@
+use crate::event::field::Timestamp;
 use crate::event::{Origin, RawEvent};
 use crate::ingest::parser::transport::{TransportParser, TransportResult};
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// Syslog transport parsers for RFC3164 and RFC5424
+// Syslog transport parsers for RFC3164 and RFC5424
 
 // Static regex for RFC3164 syslog format
 static SYSLOG_RFC3164_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -24,8 +25,43 @@ static STRUCTURED_DATA_REGEX: LazyLock<Regex> =
 
 // Static regex for parsing structured data parameters (param="value")
 static STRUCTURED_DATA_PARAM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(\S+)="([^"]*)"#).expect("Invalid structured data parameter regex")
+    Regex::new(r##"(\S+)="([^"]*)""##).expect("Invalid structured data parameter regex")
 });
+
+/// RFC3164 timestamps omit the year (e.g. "Dec 25 10:00:00") and carry no
+/// timezone; this assumes the current UTC year and treats the time as UTC.
+fn parse_rfc3164_timestamp(raw: &str) -> Option<Timestamp> {
+    let mut parts = raw.split_whitespace();
+    let month = match parts.next()? {
+        "Jan" => time::Month::January,
+        "Feb" => time::Month::February,
+        "Mar" => time::Month::March,
+        "Apr" => time::Month::April,
+        "May" => time::Month::May,
+        "Jun" => time::Month::June,
+        "Jul" => time::Month::July,
+        "Aug" => time::Month::August,
+        "Sep" => time::Month::September,
+        "Oct" => time::Month::October,
+        "Nov" => time::Month::November,
+        "Dec" => time::Month::December,
+        _ => return None,
+    };
+    let day: u8 = parts.next()?.parse().ok()?;
+    let mut time_parts = parts.next()?.split(':');
+    let hour: u8 = time_parts.next()?.parse().ok()?;
+    let minute: u8 = time_parts.next()?.parse().ok()?;
+    let second: u8 = time_parts.next()?.parse().ok()?;
+
+    let year = time::OffsetDateTime::now_utc().year();
+    let date = time::Date::from_calendar_date(year, month, day).ok()?;
+    let time_of_day = time::Time::from_hms(hour, minute, second).ok()?;
+    let nanos = time::PrimitiveDateTime::new(date, time_of_day)
+        .assume_utc()
+        .unix_timestamp_nanos();
+
+    nanos.try_into().ok().map(Timestamp::from_nanos)
+}
 
 /// Syslog RFC3164 transport parser
 /// Extracts syslog transport metadata and isolates message body for content parsing
@@ -39,12 +75,17 @@ pub fn parse_syslog_rfc3164_transport(log_text: &str, source: Origin) -> Transpo
         let pid_opt = captures.get(5).map(|m| m.as_str());
         let message_body = captures.get(6).unwrap().as_str();
 
-        // Create RawEvent with the message body for content parsing
+        // Create RawEvent with the message body for content parsing.
+        // `timestamp` (arrival time) is ingest time; `original_time` becomes
+        // the syslog header's own timestamp when it parses successfully.
         let mut raw_event = RawEvent::new(
             message_body.to_string(), // Body goes to log_text for content parsing
-            crate::event::field::Timestamp::now(),
+            Timestamp::now(),
             source,
         );
+        if let Some(ts) = parse_rfc3164_timestamp(timestamp_str) {
+            raw_event.original_time = ts;
+        }
 
         // Store transport metadata in fields
         if let Ok(priority) = priority_str.parse::<u32>() {
@@ -60,10 +101,10 @@ pub fn parse_syslog_rfc3164_transport(log_text: &str, source: Origin) -> Transpo
         raw_event.insert_field("transport.syslog.hostname", hostname.to_string());
         raw_event.insert_field("transport.syslog.process", process_name.to_string());
 
-        if let Some(pid_str) = pid_opt {
-            if let Ok(pid) = pid_str.parse::<i64>() {
-                raw_event.insert_field("transport.syslog.pid", pid);
-            }
+        if let Some(pid_str) = pid_opt
+            && let Ok(pid) = pid_str.parse::<i64>()
+        {
+            raw_event.insert_field("transport.syslog.pid", pid);
         }
 
         // Store original syslog message for reference
@@ -122,12 +163,13 @@ pub fn parse_syslog_rfc5424_transport(log_text: &str, source: Origin) -> Transpo
         let structured_data = captures.get(8).map(|m| m.as_str()).unwrap_or("-");
         let message_body = captures.get(9).unwrap().as_str();
 
-        // Create RawEvent with message body for content parsing
-        let mut raw_event = RawEvent::new(
-            message_body.to_string(),
-            crate::event::field::Timestamp::now(),
-            source,
-        );
+        // Create RawEvent with message body for content parsing.
+        // `timestamp` (arrival time) is ingest time; `original_time` becomes
+        // the syslog header's own RFC3339 timestamp when it parses successfully.
+        let mut raw_event = RawEvent::new(message_body.to_string(), Timestamp::now(), source);
+        if let Ok(ts) = Timestamp::from_rfc3339(timestamp_str) {
+            raw_event.original_time = ts;
+        }
 
         // Store RFC5424 transport metadata
         if let Ok(priority) = priority_str.parse::<u32>() {
@@ -170,11 +212,7 @@ pub fn parse_syslog_rfc5424_transport(log_text: &str, source: Origin) -> Transpo
 /// Handles file-based log ingestion with file metadata
 pub fn parse_file_transport(log_text: &str, source: Origin) -> TransportResult {
     // For files, the entire log line is the content - no transport wrapper to unwrap
-    let mut raw_event = RawEvent::new(
-        log_text.to_string(),
-        crate::event::field::Timestamp::now(),
-        source.clone(),
-    );
+    let mut raw_event = RawEvent::new(log_text.to_string(), Timestamp::now(), source.clone());
 
     // Add file transport metadata
     raw_event.insert_field("transport.type", "file".to_string());
@@ -183,7 +221,7 @@ pub fn parse_file_transport(log_text: &str, source: Origin) -> TransportResult {
         raw_event.insert_field("transport.file.path", path.clone());
 
         // Extract file metadata
-        if let Some(filename) = path.split(['/', '\\']).last() {
+        if let Some(filename) = path.split(['/', '\\']).next_back() {
             raw_event.insert_field("transport.file.name", filename.to_string());
         }
 
@@ -269,6 +307,15 @@ mod tests {
                         .unwrap(),
                     "programname"
                 );
+
+                // RFC3164 has no year, so the parser assumes the current UTC year.
+                let year = time::OffsetDateTime::now_utc().year();
+                let expected = time::PrimitiveDateTime::new(
+                    time::Date::from_calendar_date(year, time::Month::December, 25).unwrap(),
+                    time::Time::from_hms(10, 0, 0).unwrap(),
+                )
+                .assume_utc();
+                assert_eq!(raw_event.original_time.as_secs(), expected.unix_timestamp());
             }
             _ => panic!("Expected successful transport parse"),
         }
@@ -388,12 +435,17 @@ mod tests {
                 assert!(
                     raw_event
                         .fields
-                        .get("transport.syslog.structured_data_raw")
-                        .is_some()
+                        .contains_key("transport.syslog.structured_data_raw")
                 );
 
                 // Verify message body was extracted correctly
                 assert_eq!(raw_event.log_text, "An application event log entry");
+
+                // RFC5424 timestamps are RFC3339 and should be parsed exactly.
+                assert_eq!(
+                    raw_event.original_time,
+                    Timestamp::from_rfc3339("2003-10-11T22:14:15.003Z").unwrap()
+                );
             }
             _ => panic!("Expected successful transport parse"),
         }

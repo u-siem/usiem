@@ -113,7 +113,7 @@ pub trait AnyDataset: Send + Sync {
     /// # Parameters
     ///
     /// * `update` - A type-erased update that should be downcast to the
-    ///              dataset's expected update type (e.g., `DatasetUpdate<K,V>`)
+    ///   dataset's expected update type (e.g., `DatasetUpdate<K,V>`)
     ///
     /// # Returns
     ///
@@ -307,6 +307,7 @@ mod tests {
     // Test dataset implementation for testing
     #[derive(Debug, Clone)]
     struct TestDataset {
+        #[allow(dead_code)]
         data: HashMap<String, String>,
     }
 

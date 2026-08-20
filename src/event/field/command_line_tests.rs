@@ -3,17 +3,16 @@ use crate::event::field::FieldValue;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
 
     fn create_str_field(s: &str) -> FieldValue {
-        FieldValue::Str(Cow::Owned(s.to_string()))
+        FieldValue::Str(s.into())
     }
 
     fn create_array_field(items: Vec<&str>) -> FieldValue {
         FieldValue::Array(
             items
                 .into_iter()
-                .map(|s| FieldValue::Str(Cow::Owned(s.to_string())))
+                .map(|s| FieldValue::Str(s.into()))
                 .collect(),
         )
     }

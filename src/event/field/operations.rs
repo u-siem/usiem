@@ -147,13 +147,10 @@ impl Div for FieldValue {
                     Ok(FieldValue::Int(a / b))
                 }
             }
-            (FieldValue::Uint(a), FieldValue::Uint(b)) => {
-                if b == 0 {
-                    Err(FieldConversionError::DivisionByZero)
-                } else {
-                    Ok(FieldValue::Uint(a / b))
-                }
-            }
+            (FieldValue::Uint(a), FieldValue::Uint(b)) => a
+                .checked_div(b)
+                .map(FieldValue::Uint)
+                .ok_or(FieldConversionError::DivisionByZero),
             (FieldValue::Float(a), FieldValue::Float(b)) => {
                 if b == 0.0 {
                     Err(FieldConversionError::DivisionByZero)
@@ -279,7 +276,11 @@ impl PartialOrd for FieldValue {
             (FieldValue::Float(a), FieldValue::Uint(b)) => a.partial_cmp(&(*b as f64)),
 
             // String comparisons
-            (FieldValue::Str(a), FieldValue::Str(b)) => a.as_ref().partial_cmp(b.as_ref()),
+            (FieldValue::Str(a), FieldValue::Str(b)) => {
+                let a: &str = a.as_ref();
+                let b: &str = b.as_ref();
+                a.partial_cmp(b)
+            }
 
             // Boolean comparisons
             (FieldValue::Bool(a), FieldValue::Bool(b)) => a.partial_cmp(b),

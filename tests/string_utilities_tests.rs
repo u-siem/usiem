@@ -115,12 +115,12 @@ fn test_string_pattern_matching() {
 fn test_non_string_field_behavior() {
     let int_field = FieldValue::int(42);
     let bool_field = FieldValue::bool(true);
-    let float_field = FieldValue::float(3.14);
+    let float_field = FieldValue::float(4.25);
 
     // All string operations should return false/empty for non-string fields
     assert!(!int_field.contains("42"));
     assert!(!bool_field.starts_with("true"));
-    assert!(!float_field.ends_with("14"));
+    assert!(!float_field.ends_with("25"));
     assert!(!int_field.equals("42"));
 
     assert_eq!(int_field.len(), 0);
@@ -215,7 +215,7 @@ fn test_real_world_siem_scenarios() {
 
 #[test]
 fn test_case_insensitive_threat_detection() {
-    let events = vec![
+    let events = [
         ObjectBuilder::new()
             .str("command", "powershell.exe -ExecutionPolicy Bypass")
             .build(),

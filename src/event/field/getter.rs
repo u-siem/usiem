@@ -81,7 +81,7 @@ impl<'a> FieldGetter<'a> {
 
     /// Convert to string with default value
     pub fn as_str_or(&self, default: &'a str) -> &'a str {
-        self.as_str().unwrap_or_else(move || default)
+        self.as_str().unwrap_or(default)
     }
 
     /// Convert to string with default value (returns owned String for temporary usage)
@@ -93,44 +93,43 @@ impl<'a> FieldGetter<'a> {
 
     /// Check if string field contains the given substring (case sensitive)
     pub fn contains(&self, needle: &str) -> bool {
-        self.field.map_or(false, |f| f.contains(needle))
+        self.field.is_some_and(|f| f.contains(needle))
     }
 
     /// Check if string field contains the given substring (case insensitive)
     pub fn contains_ignore_case(&self, needle: &str) -> bool {
-        self.field.map_or(false, |f| f.contains_ignore_case(needle))
+        self.field.is_some_and(|f| f.contains_ignore_case(needle))
     }
 
     /// Check if string field starts with the given prefix (case sensitive)
     pub fn starts_with(&self, prefix: &str) -> bool {
-        self.field.map_or(false, |f| f.starts_with(prefix))
+        self.field.is_some_and(|f| f.starts_with(prefix))
     }
 
     /// Check if string field starts with the given prefix (case insensitive)
     pub fn starts_with_ignore_case(&self, prefix: &str) -> bool {
         self.field
-            .map_or(false, |f| f.starts_with_ignore_case(prefix))
+            .is_some_and(|f| f.starts_with_ignore_case(prefix))
     }
 
     /// Check if string field ends with the given suffix (case sensitive)
     pub fn ends_with(&self, suffix: &str) -> bool {
-        self.field.map_or(false, |f| f.ends_with(suffix))
+        self.field.is_some_and(|f| f.ends_with(suffix))
     }
 
     /// Check if string field ends with the given suffix (case insensitive)
     pub fn ends_with_ignore_case(&self, suffix: &str) -> bool {
-        self.field
-            .map_or(false, |f| f.ends_with_ignore_case(suffix))
+        self.field.is_some_and(|f| f.ends_with_ignore_case(suffix))
     }
 
     /// Check if string field equals the given string (case sensitive)
     pub fn equals(&self, other: &str) -> bool {
-        self.field.map_or(false, |f| f.equals(other))
+        self.field.is_some_and(|f| f.equals(other))
     }
 
     /// Check if string field equals the given string (case insensitive)
     pub fn equals_ignore_case(&self, other: &str) -> bool {
-        self.field.map_or(false, |f| f.equals_ignore_case(other))
+        self.field.is_some_and(|f| f.equals_ignore_case(other))
     }
 
     /// Get the length of the string field (returns 0 for non-string fields or missing fields)
@@ -140,7 +139,7 @@ impl<'a> FieldGetter<'a> {
 
     /// Check if string field is empty (returns true for non-string fields or missing fields)
     pub fn is_empty(&self) -> bool {
-        self.field.map_or(true, |f| f.is_empty())
+        self.field.is_none_or(|f| f.is_empty())
     }
 
     /// Convert string field to lowercase (returns empty string for non-string or missing fields)
@@ -165,7 +164,7 @@ impl<'a> FieldGetter<'a> {
 
     /// Check if string field matches a pattern (returns false for non-string or missing fields)
     pub fn matches_pattern(&self, pattern: &str) -> bool {
-        self.field.map_or(false, |f| f.matches_pattern(pattern))
+        self.field.is_some_and(|f| f.matches_pattern(pattern))
     }
 
     /// Convert to bool

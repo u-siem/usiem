@@ -185,7 +185,7 @@ impl ObjectBuilder {
         K: Into<Text>,
     {
         let key_text = key.into();
-        let key_str = key_text.as_ref();
+        let key_str: &str = key_text.as_ref();
 
         if key_str.contains('.') {
             self.insert_nested(&key_text, value);
@@ -196,7 +196,7 @@ impl ObjectBuilder {
 
     /// Helper method to insert nested fields using dot notation
     fn insert_nested(&mut self, key: &Text, value: FieldValue) {
-        let key_str = key.as_ref();
+        let key_str: &str = key.as_ref();
 
         // Find the first dot position to split efficiently without collecting
         if let Some(dot_pos) = key_str.find('.') {
@@ -265,7 +265,7 @@ impl ObjectBuilder {
         K: Into<Text>,
     {
         let key_text = key.into();
-        let key_str = key_text.as_ref();
+        let key_str: &str = key_text.as_ref();
 
         if key_str.contains('.') {
             // Use nested field access by implementing it directly
@@ -305,7 +305,7 @@ impl ObjectBuilder {
         K: Into<Text>,
     {
         let key_text = key.into();
-        let key_str = key_text.as_ref();
+        let key_str: &str = key_text.as_ref();
 
         if key_str.contains('.') {
             // Check nested field exists
@@ -319,20 +319,22 @@ impl ObjectBuilder {
     /// Get a fluent field getter for chaining operations
     /// Supports dot notation for nested field access (e.g., "process.name", "network.source.ip")
     /// Returns a FieldGetter that provides convenient type conversion and operations
-    pub fn getter<K>(&self, key: K) -> super::getter::FieldGetter<'_>
+    pub fn getter<'a, K>(&'a self, key: &'a K) -> super::getter::FieldGetter<'a>
     where
-        K: Into<Text>,
+        K: AsRef<str> + ?Sized,
     {
-        let key_text = key.into();
-        let key_str = key_text.as_ref();
+        let key_str = key.as_ref();
 
         super::getter::FieldGetter {
             field: if key_str.contains('.') {
                 self.get_nested_field(key_str)
             } else {
-                self.fields.get(&key_text)
+                self.fields.get(key_str)
             },
-            path: std::borrow::Cow::Owned(key_str.to_owned()),
+            // Borrowed directly from the caller's `key`, which already
+            // outlives this call — unlike converting through an owned
+            // `Text` first, this never allocates a copy of the path.
+            path: std::borrow::Cow::Borrowed(key_str),
         }
     }
 }
@@ -363,8 +365,6 @@ pub type EventBuilder = ObjectBuilder;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
-
     #[test]
     fn test_object_builder_basic() {
         let event = ObjectBuilder::new()
@@ -377,25 +377,13 @@ mod tests {
 
         if let FieldValue::Object(map) = event {
             assert_eq!(
-                map.get(&Cow::Borrowed("event_type")).unwrap().as_str(),
+                map.get("event_type").unwrap().as_str(),
                 Some("authentication")
             );
-            assert_eq!(
-                map.get(&Cow::Borrowed("severity")).unwrap().as_i64(),
-                Some(3)
-            );
-            assert_eq!(
-                map.get(&Cow::Borrowed("success")).unwrap().as_bool(),
-                Some(true)
-            );
-            assert_eq!(
-                map.get(&Cow::Borrowed("response_time")).unwrap().as_f64(),
-                Some(125.5)
-            );
-            assert_eq!(
-                map.get(&Cow::Borrowed("user_id")).unwrap().as_u64(),
-                Some(12345)
-            );
+            assert_eq!(map.get("severity").unwrap().as_i64(), Some(3));
+            assert_eq!(map.get("success").unwrap().as_bool(), Some(true));
+            assert_eq!(map.get("response_time").unwrap().as_f64(), Some(125.5));
+            assert_eq!(map.get("user_id").unwrap().as_u64(), Some(12345));
         } else {
             panic!("Expected Object variant");
         }
@@ -429,15 +417,12 @@ mod tests {
             .build();
 
         if let FieldValue::Object(map) = event {
-            if let Some(FieldValue::Object(source_map)) = map.get(&Cow::Borrowed("source")) {
+            if let Some(FieldValue::Object(source_map)) = map.get("source") {
                 assert_eq!(
-                    source_map.get(&Cow::Borrowed("ip")).unwrap().as_str(),
+                    source_map.get("ip").unwrap().as_str(),
                     Some("192.168.1.100")
                 );
-                assert_eq!(
-                    source_map.get(&Cow::Borrowed("port")).unwrap().as_u64(),
-                    Some(443)
-                );
+                assert_eq!(source_map.get("port").unwrap().as_u64(), Some(443));
             } else {
                 panic!("Expected nested object");
             }
@@ -455,14 +440,14 @@ mod tests {
             .build();
 
         if let FieldValue::Object(map) = event {
-            if let Some(FieldValue::Array(tags)) = map.get(&Cow::Borrowed("tags")) {
+            if let Some(FieldValue::Array(tags)) = map.get("tags") {
                 assert_eq!(tags.len(), 3);
                 assert_eq!(tags[0].as_str(), Some("security"));
             } else {
                 panic!("Expected array");
             }
 
-            if let Some(FieldValue::Array(codes)) = map.get(&Cow::Borrowed("codes")) {
+            if let Some(FieldValue::Array(codes)) = map.get("codes") {
                 assert_eq!(codes.len(), 3);
                 assert_eq!(codes[0].as_i64(), Some(200));
             } else {
@@ -488,12 +473,26 @@ mod tests {
     }
 
     #[test]
+    fn test_object_builder_getter() {
+        let builder = ObjectBuilder::new()
+            .str("event_type", "authentication")
+            .object("source", ObjectBuilder::new().str("ip", "192.168.1.100"));
+
+        assert_eq!(
+            builder.getter("event_type").as_str(),
+            Some("authentication")
+        );
+        assert_eq!(builder.getter("source.ip").as_str(), Some("192.168.1.100"));
+        assert!(builder.getter("missing").is_missing());
+    }
+
+    #[test]
     fn test_object_builder_now() {
         let event = ObjectBuilder::new().str("event_type", "test").now().build();
 
         if let FieldValue::Object(map) = event {
-            assert!(map.contains_key(&Cow::Borrowed("timestamp")));
-            if let Some(FieldValue::Time(_)) = map.get(&Cow::Borrowed("timestamp")) {
+            assert!(map.contains_key("timestamp"));
+            if let Some(FieldValue::Time(_)) = map.get("timestamp") {
                 // Timestamp exists and is correct type
             } else {
                 panic!("Expected timestamp field");

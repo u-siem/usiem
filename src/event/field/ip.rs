@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 
 /// Specialized IP field supporting both IPv4 and IPv6
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -7,16 +8,19 @@ pub enum Ip {
     V6(Ipv6Addr),
 }
 
-impl Ip {
-    /// Create from string representation
-    pub fn from_str(s: &str) -> Result<Self, IpParseError> {
+impl FromStr for Ip {
+    type Err = IpParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.parse::<IpAddr>() {
             Ok(IpAddr::V4(ip)) => Ok(Ip::V4(ip)),
             Ok(IpAddr::V6(ip)) => Ok(Ip::V6(ip)),
             Err(_) => Err(IpParseError::InvalidFormat),
         }
     }
+}
 
+impl Ip {
     /// Get as IpAddr
     pub fn as_ip_addr(&self) -> IpAddr {
         match self {

@@ -267,14 +267,12 @@ impl<'a> Url<'a> {
 
     /// Check if URL uses HTTPS
     pub fn is_https(&self) -> bool {
-        self.scheme
-            .map_or(false, |s| s.eq_ignore_ascii_case("https"))
+        self.scheme.is_some_and(|s| s.eq_ignore_ascii_case("https"))
     }
 
     /// Check if URL uses HTTP
     pub fn is_http(&self) -> bool {
-        self.scheme
-            .map_or(false, |s| s.eq_ignore_ascii_case("http"))
+        self.scheme.is_some_and(|s| s.eq_ignore_ascii_case("http"))
     }
 }
 

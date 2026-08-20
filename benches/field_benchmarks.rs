@@ -25,7 +25,7 @@ fn bench_timestamp_operations(c: &mut Criterion) {
 
     group.bench_function("timestamp_from_nanos", |b| {
         b.iter(|| {
-            let field = FieldValue::Int(1640995200_000_000_000);
+            let field = FieldValue::Int(1_640_995_200_000_000_000);
             let _: Timestamp = black_box(field).try_into().unwrap();
         })
     });

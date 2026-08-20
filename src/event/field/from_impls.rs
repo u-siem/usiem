@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::field_value::FieldValue;
@@ -9,13 +8,13 @@ use super::time::Timestamp;
 // Ergonomic From implementations for common types
 impl From<&'static str> for FieldValue {
     fn from(s: &'static str) -> Self {
-        FieldValue::Str(Cow::Borrowed(s))
+        FieldValue::Str(Text::from(s))
     }
 }
 
 impl From<String> for FieldValue {
     fn from(s: String) -> Self {
-        FieldValue::Str(Cow::Owned(s))
+        FieldValue::Str(Text::from(s))
     }
 }
 

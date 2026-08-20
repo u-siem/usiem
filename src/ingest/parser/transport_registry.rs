@@ -140,14 +140,14 @@ impl TransportRegistry {
 
         // Try origin-pattern based parsers
         let origin_type = self.get_origin_type(&source);
-        if let Some(indices) = self.origin_patterns.get(&*origin_type).cloned() {
+        if let Some(indices) = self.origin_patterns.get(origin_type).cloned() {
             for &idx in &indices {
                 if let Some(parser) = self.parsers.get(idx) {
                     // Skip if already tried in source priorities
                     if self
                         .source_priorities
                         .get(&origin_hash)
-                        .map_or(false, |prios| prios.contains(&idx))
+                        .is_some_and(|prios| prios.contains(&idx))
                     {
                         continue;
                     }
@@ -177,11 +177,11 @@ impl TransportRegistry {
             let already_tried = self
                 .source_priorities
                 .get(&origin_hash)
-                .map_or(false, |prios| prios.contains(&idx))
+                .is_some_and(|prios| prios.contains(&idx))
                 || self
                     .origin_patterns
                     .get(origin_type)
-                    .map_or(false, |prios| prios.contains(&idx));
+                    .is_some_and(|prios| prios.contains(&idx));
 
             if already_tried {
                 continue;
@@ -247,12 +247,13 @@ impl TransportRegistry {
         _parser_idx: usize,
         current_pos: usize,
     ) {
-        if let Some(priorities) = self.source_priorities.get_mut(&origin_hash) {
-            if current_pos > 0 && priorities.len() > current_pos {
-                // Move parser to front
-                let parser = priorities.remove(current_pos);
-                priorities.insert(0, parser);
-            }
+        if let Some(priorities) = self.source_priorities.get_mut(&origin_hash)
+            && current_pos > 0
+            && priorities.len() > current_pos
+        {
+            // Move parser to front
+            let parser = priorities.remove(current_pos);
+            priorities.insert(0, parser);
         }
     }
 
@@ -260,7 +261,7 @@ impl TransportRegistry {
     fn add_parser_to_source_priority(&mut self, origin_hash: u64, parser_idx: usize) {
         self.source_priorities
             .entry(origin_hash)
-            .or_insert_with(Vec::new)
+            .or_default()
             .insert(0, parser_idx);
     }
 

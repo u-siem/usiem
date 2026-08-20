@@ -2,6 +2,7 @@ use super::error::FieldConversionError;
 use super::field_value::FieldValue;
 use super::ip::Ip;
 use super::time::Timestamp;
+use std::str::FromStr;
 
 // TryFrom implementations for owned values
 impl TryFrom<FieldValue> for String {

@@ -64,12 +64,12 @@ impl PartialEq for FieldValue {
 impl FieldValue {
     /// Create a FieldValue::Str from a static string (ergonomic constructor)
     pub fn str(s: &'static str) -> Self {
-        FieldValue::Str(Cow::Borrowed(s))
+        FieldValue::Str(Text::from(s))
     }
 
     /// Create a FieldValue::Str from an owned string (ergonomic constructor)
     pub fn string(s: String) -> Self {
-        FieldValue::Str(Cow::Owned(s))
+        FieldValue::Str(Text::from(s))
     }
 
     /// Create a FieldValue::Int (ergonomic constructor)
@@ -269,7 +269,7 @@ impl FieldValue {
         for part in path.split('.') {
             match current {
                 FieldValue::Object(map) => {
-                    current = map.get(&Cow::Borrowed(part))?;
+                    current = map.get(part)?;
                 }
                 _ => return None,
             }
@@ -284,7 +284,7 @@ impl FieldValue {
                 self.get_nested_field(path)
             } else {
                 match self {
-                    FieldValue::Object(map) => map.get(&Cow::Borrowed(path)),
+                    FieldValue::Object(map) => map.get(path),
                     _ => None,
                 }
             },
@@ -318,48 +318,46 @@ impl FieldValue {
 
     /// Check if string field contains the given substring (case sensitive)
     pub fn contains(&self, needle: &str) -> bool {
-        self.as_str().map_or(false, |s| s.contains(needle))
+        self.as_str().is_some_and(|s| s.contains(needle))
     }
 
     /// Check if string field contains the given substring (case insensitive)
     pub fn contains_ignore_case(&self, needle: &str) -> bool {
         self.as_str()
-            .map_or(false, |s| s.to_lowercase().contains(&needle.to_lowercase()))
+            .is_some_and(|s| s.to_lowercase().contains(&needle.to_lowercase()))
     }
 
     /// Check if string field starts with the given prefix (case sensitive)
     pub fn starts_with(&self, prefix: &str) -> bool {
-        self.as_str().map_or(false, |s| s.starts_with(prefix))
+        self.as_str().is_some_and(|s| s.starts_with(prefix))
     }
 
     /// Check if string field starts with the given prefix (case insensitive)
     pub fn starts_with_ignore_case(&self, prefix: &str) -> bool {
-        self.as_str().map_or(false, |s| {
-            s.to_lowercase().starts_with(&prefix.to_lowercase())
-        })
+        self.as_str()
+            .is_some_and(|s| s.to_lowercase().starts_with(&prefix.to_lowercase()))
     }
 
     /// Check if string field ends with the given suffix (case sensitive)
     pub fn ends_with(&self, suffix: &str) -> bool {
-        self.as_str().map_or(false, |s| s.ends_with(suffix))
+        self.as_str().is_some_and(|s| s.ends_with(suffix))
     }
 
     /// Check if string field ends with the given suffix (case insensitive)
     pub fn ends_with_ignore_case(&self, suffix: &str) -> bool {
-        self.as_str().map_or(false, |s| {
-            s.to_lowercase().ends_with(&suffix.to_lowercase())
-        })
+        self.as_str()
+            .is_some_and(|s| s.to_lowercase().ends_with(&suffix.to_lowercase()))
     }
 
     /// Check if string field equals the given string (case sensitive)
     pub fn equals(&self, other: &str) -> bool {
-        self.as_str().map_or(false, |s| s == other)
+        self.as_str() == Some(other)
     }
 
     /// Check if string field equals the given string (case insensitive)
     pub fn equals_ignore_case(&self, other: &str) -> bool {
         self.as_str()
-            .map_or(false, |s| s.to_lowercase() == other.to_lowercase())
+            .is_some_and(|s| s.to_lowercase() == other.to_lowercase())
     }
 
     /// Get the length of the string field (returns 0 for non-string fields)
@@ -369,7 +367,7 @@ impl FieldValue {
 
     /// Check if string field is empty (returns true for non-string fields)
     pub fn is_empty(&self) -> bool {
-        self.as_str().map_or(true, |s| s.is_empty())
+        self.as_str().is_none_or(|s| s.is_empty())
     }
 
     /// Convert string field to lowercase (returns empty string for non-string fields)
@@ -383,7 +381,7 @@ impl FieldValue {
     }
 
     /// Trim whitespace from string field (returns empty string for non-string fields)
-    pub fn trim<'a>(&'a self) -> &'a str {
+    pub fn trim(&self) -> &str {
         self.as_str().map_or("", |s| s.trim())
     }
 
@@ -526,7 +524,8 @@ impl FieldValue {
                 .filter(|element| {
                     arr.iter().any(|item| {
                         if let FieldValue::Str(s) = item {
-                            s.as_ref() == **element
+                            let s: &str = s.as_ref();
+                            s == **element
                         } else {
                             false
                         }
@@ -562,7 +561,7 @@ impl FieldValue {
     // === CommandLine Parsing ===
 
     /// Parse this field as a command line if it's a string or array
-    pub fn as_command_line(&self) -> Option<super::command_line::CommandLine> {
+    pub fn as_command_line(&self) -> Option<super::command_line::CommandLine<'_>> {
         match self {
             FieldValue::Str(s) => Some(super::command_line::CommandLine::parse(s)),
             FieldValue::Array(arr) => {
@@ -570,7 +569,10 @@ impl FieldValue {
                 let args: Vec<std::borrow::Cow<str>> = arr
                     .iter()
                     .filter_map(|item| match item {
-                        FieldValue::Str(s) => Some(s.clone()),
+                        // Borrowing directly is free; `s.clone()` used to
+                        // sometimes allocate (the `Cow::Owned` case) back
+                        // when `Text` was `Cow<'static, str>`.
+                        FieldValue::Str(s) => Some(Cow::Borrowed(s.as_ref())),
                         _ => None,
                     })
                     .collect();
@@ -588,7 +590,7 @@ impl FieldValue {
     /// Parse this field as a command line, returning an error if not possible
     pub fn require_command_line(
         &self,
-    ) -> Result<super::command_line::CommandLine, FieldConversionError> {
+    ) -> Result<super::command_line::CommandLine<'_>, FieldConversionError> {
         self.as_command_line()
             .ok_or_else(|| FieldConversionError::UnsupportedOperation {
                 operation: "command line parsing",

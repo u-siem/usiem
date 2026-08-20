@@ -16,11 +16,12 @@ pub mod json_interop;
 #[cfg(feature = "serde")]
 pub mod core_serde;
 
-pub use core::{Event as CoreEvent, RawData};
-pub use field::{Event, EventBuilder, FieldValue, Ip, ObjectBuilder, Timestamp};
+pub use core::{Event as CoreEvent, EventId, RawData};
+pub use field::{Event, EventBuilder, FieldMap, FieldValue, Ip, ObjectBuilder, Timestamp};
 pub use json::JsonValue;
 pub use origin::Origin;
 pub use raw::RawEvent;
 pub use schema::{
-    FieldConstraints, Schema, SchemaField, SchemaFieldBuilder, SchemaFieldType, SchemaMetadata,
+    FieldConstraints, Schema, SchemaError, SchemaField, SchemaFieldBuilder, SchemaFieldType,
+    SchemaMetadata,
 };

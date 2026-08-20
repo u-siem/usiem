@@ -246,7 +246,7 @@ impl PipelineMetadata {
             skipped_stages,
             in_progress_stages,
             total_processing_time: self.get_total_processing_time(),
-            slowest_stage: slowest_stage.map(|(name, duration)| (name, duration)),
+            slowest_stage,
         }
     }
 
@@ -312,7 +312,7 @@ impl MetricValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+
     use std::time::Duration;
 
     #[test]

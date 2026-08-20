@@ -1,6 +1,5 @@
 use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::event::origin::Origin;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -15,7 +14,7 @@ pub struct RawEvent {
     pub source: Origin,
 
     /// Extracted fields (populated during first parsing: Syslog...)
-    pub fields: HashMap<Cow<'static, str>, FieldValue>,
+    pub fields: HashMap<Text, FieldValue>,
 
     /// Timestamp when event arrived
     pub timestamp: Timestamp,
@@ -56,8 +55,8 @@ impl RawEvent {
 
         // Create Event with proper structure
         let mut event = Event::new(
-            self.timestamp, // arrival_time
-            self.timestamp, // original_time
+            self.timestamp,     // arrival_time
+            self.original_time, // original_time
             origin,
             RawData::Text(self.log_text),
         );
@@ -115,8 +114,7 @@ impl RawEvent {
             self.insert_nested_field_optimized(first_part, remaining_part, value.into());
         } else {
             // No dots, just insert directly
-            self.fields
-                .insert(Cow::Owned(path.to_string()), value.into());
+            self.fields.insert(Text::from(path), value.into());
         }
     }
 
@@ -126,7 +124,7 @@ impl RawEvent {
         remaining_path: &str,
         value: FieldValue,
     ) {
-        let key = Cow::Owned(first_part.to_string());
+        let key = Text::from(first_part);
 
         // Check if we have more nesting by looking for dots in remaining path
         if !remaining_path.contains('.') {
@@ -138,12 +136,12 @@ impl RawEvent {
 
             match entry {
                 FieldValue::Object(map) => {
-                    map.insert(Cow::Owned(remaining_path.to_string()), value);
+                    map.insert(Text::from(remaining_path), value);
                 }
                 _ => {
                     // Replace with object and insert
                     let mut new_map = HashMap::new();
-                    new_map.insert(Cow::Owned(remaining_path.to_string()), value);
+                    new_map.insert(Text::from(remaining_path), value);
                     *entry = FieldValue::Object(new_map);
                 }
             }
@@ -196,7 +194,7 @@ impl RawEvent {
     fn collect_field_names(
         &self,
         prefix: &str,
-        fields: &HashMap<Cow<'static, str>, FieldValue>,
+        fields: &HashMap<Text, FieldValue>,
         names: &mut Vec<String>,
     ) {
         for (key, value) in fields {

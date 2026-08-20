@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::str::FromStr;
 use usiem::event::field::{FieldConversionError, FieldValue, Ip, Text, Timestamp};
 
 /// Integration tests for field value conversions across different scenarios
@@ -38,16 +39,16 @@ fn test_real_world_event_parsing() {
     assert_eq!(source_ip.to_string(), "192.168.1.100");
     assert_eq!(dest_port, 443);
     assert_eq!(bytes, 1024);
-    assert_eq!(success, true);
+    assert!(success);
 }
 
 #[test]
 fn test_mixed_type_array_processing() {
     // Test processing arrays with mixed types (common in JSON logs)
-    let mixed_array = vec![
+    let mixed_array = [
         FieldValue::Int(42),
         FieldValue::Str("hello".into()),
-        FieldValue::Float(3.14),
+        FieldValue::Float(4.25),
         FieldValue::Bool(true),
     ];
 
@@ -56,7 +57,7 @@ fn test_mixed_type_array_processing() {
         mixed_array.iter().map(|v| v.try_into()).collect();
 
     let strings = string_values.unwrap();
-    assert_eq!(strings, vec!["42", "hello", "3.14", "true"]);
+    assert_eq!(strings, vec!["42", "hello", "4.25", "true"]);
 }
 
 #[test]
@@ -73,14 +74,14 @@ fn test_nested_object_field_extraction() {
     let root_field = FieldValue::Object(outer_obj);
 
     // Extract nested values
-    if let FieldValue::Object(ref root) = root_field {
-        if let Some(FieldValue::Object(metadata)) = root.get("metadata") {
-            let user_id: i64 = (&metadata["user_id"]).try_into().unwrap();
-            let session_id: String = (&metadata["session_id"]).try_into().unwrap();
+    if let FieldValue::Object(ref root) = root_field
+        && let Some(FieldValue::Object(metadata)) = root.get("metadata")
+    {
+        let user_id: i64 = (&metadata["user_id"]).try_into().unwrap();
+        let session_id: String = (&metadata["session_id"]).try_into().unwrap();
 
-            assert_eq!(user_id, 12345);
-            assert_eq!(session_id, "sess_abc123");
-        }
+        assert_eq!(user_id, 12345);
+        assert_eq!(session_id, "sess_abc123");
     }
 }
 
@@ -203,10 +204,10 @@ fn test_siem_analytics_with_math_operations() {
 
     let alert_deadline = (event_time.clone() + alert_window.clone()).unwrap();
 
-    if let FieldValue::Time(deadline) = alert_deadline {
-        if let FieldValue::Time(original_time) = event_time {
-            assert!(deadline > original_time);
-        }
+    if let FieldValue::Time(deadline) = alert_deadline
+        && let FieldValue::Time(original_time) = event_time
+    {
+        assert!(deadline > original_time);
     }
 }
 
@@ -214,7 +215,7 @@ fn test_siem_analytics_with_math_operations() {
 fn test_field_comparison_and_filtering() {
     // Simulate filtering operations common in SIEM queries
 
-    let events = vec![
+    let events = [
         ("event1", FieldValue::Int(5)),  // Low priority
         ("event2", FieldValue::Int(15)), // Medium priority
         ("event3", FieldValue::Int(25)), // High priority
@@ -237,7 +238,7 @@ fn test_field_comparison_and_filtering() {
     let five_min_ago = now.sub_secs(300);
     let ten_min_ago = now.sub_secs(600);
 
-    let mut time_events = vec![
+    let mut time_events = [
         ("latest", FieldValue::Time(now)),
         ("middle", FieldValue::Time(five_min_ago)),
         ("oldest", FieldValue::Time(ten_min_ago)),
@@ -273,7 +274,7 @@ fn test_copyable_field_operations_in_siem() {
     let bool_field = FieldValue::Bool(true);
     let int_field = FieldValue::Int(42);
     let uint_field = FieldValue::Uint(100);
-    let float_field = FieldValue::Float(3.14);
+    let float_field = FieldValue::Float(4.25);
 
     // Test is_copyable for copyable types
     assert!(timestamp_field.is_copyable());

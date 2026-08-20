@@ -2,19 +2,42 @@
 name = "usiem"
 version = "0.1.0"
 edition = "2024"
+description = "Modular, high-performance framework for building custom SIEM (Security Information and Event Management) solutions in Rust."
+license = "MIT"
+repository = "https://github.com/u-siem/usiem"
+readme = "README.md"
+keywords = ["siem", "security", "log-parsing", "parser", "events"]
+categories = ["parsing", "data-structures"]
 
 [dependencies]
 time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 regex = "1.0"
 serde = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
+# Small-map storage for FieldMap (Action params/result data): near-zero
+# required deps, Servo-maintained. Pinned to the stable 1.x line, not the
+# 2.0 alpha currently on crates.io.
+smallvec = "1"
+# Text's representation: inline up to 24 bytes on 64-bit, a real heap
+# allocation beyond that. Chosen over smol_str specifically for genuine
+# in-place mutation (push_str/truncate/insert/etc.) — no current parser
+# needs it, but this is a deliberate hedge against a future one that does;
+# the tradeoff is that cloning a long (>24 byte) value is a real copy, not
+# an Arc bump. Its own "serde" feature is enabled (see [features] below)
+# because FieldValue::Object's HashMap<Text, FieldValue> needs Text: Serialize
+# for HashMap's own Serialize impl to apply — not optional in practice.
+compact_str = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# Unconditional (not feature-gated): used by `#[cfg(feature = "serde")]` tests as a
+# concrete serde format to exercise Origin/RawData's Serialize/Deserialize impls,
+# independent of this crate's own optional "json" feature (JsonValue interop).
+serde_json = "1.0"
 
 [features]
 default = ["metadata"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "compact_str/serde"]
 json = ["dep:serde_json", "serde"]
 metadata = []
 

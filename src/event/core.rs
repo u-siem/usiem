@@ -14,7 +14,7 @@ pub enum RawData {
 
 /// Core immutable event structure containing the original event data
 /// This structure is Send + Sync for multi-threaded processing pipelines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     /// When this event arrived at our SIEM system
     pub(crate) arrival_time: Timestamp,
@@ -84,11 +84,47 @@ impl Event {
     pub fn get_field(&self, key: &str) -> Option<&FieldValue> {
         self.fields.get(key)
     }
+
+    /// A stable identifier for this event, suitable for deduplication.
+    ///
+    /// Derived from [`Event::origin`], [`Event::original_time`], and the raw
+    /// content — deliberately *not* [`Event::arrival_time`], so that a
+    /// re-delivered duplicate of the same source event (which will have a
+    /// different arrival time but the same origin/original_time/content)
+    /// produces the same [`EventId`]. This is a content hash, not a random
+    /// globally-unique identifier: two genuinely distinct events that happen
+    /// to share origin, original_time, and raw content will collide.
+    pub fn id(&self) -> EventId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        self.origin.hash(&mut hasher);
+        self.original_time.as_nanos().hash(&mut hasher);
+        self.raw_data.as_string().hash(&mut hasher);
+        EventId(hasher.finish())
+    }
 }
 
-// Ensure Event is Send + Sync for multi-threaded processing
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
+/// A stable identifier for an [`Event`], returned by [`Event::id`].
+///
+/// See [`Event::id`] for what this is derived from and its collision
+/// characteristics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EventId(u64);
+
+impl EventId {
+    /// The identifier as a raw `u64`.
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for EventId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
 
 impl RawData {
     /// Create RawData from a text string
@@ -143,9 +179,6 @@ mod tests {
 
     #[cfg(feature = "serde")]
     use serde_json;
-
-    #[cfg(feature = "json")]
-    use serde_json as external_json;
 
     #[test]
     fn test_event_creation() {
@@ -224,6 +257,48 @@ mod tests {
         assert_send_sync::<Event>();
     }
 
+    #[test]
+    fn test_event_id_is_stable_for_identical_content() {
+        let origin = Origin::from_hostname("test-server");
+        let original_time = Timestamp::from_secs(1_700_000_000);
+
+        let event_a = Event::new(
+            Timestamp::now(), // arrival time differs...
+            original_time,
+            origin.clone(),
+            RawData::from_text("same log line"),
+        );
+        let event_b = Event::new(
+            Timestamp::now().add_secs(60), // ...as would happen on redelivery
+            original_time,
+            origin,
+            RawData::from_text("same log line"),
+        );
+
+        assert_eq!(event_a.id(), event_b.id());
+    }
+
+    #[test]
+    fn test_event_id_differs_for_different_content() {
+        let origin = Origin::from_hostname("test-server");
+        let original_time = Timestamp::from_secs(1_700_000_000);
+
+        let event_a = Event::new(
+            original_time,
+            original_time,
+            origin.clone(),
+            RawData::from_text("log line one"),
+        );
+        let event_b = Event::new(
+            original_time,
+            original_time,
+            origin,
+            RawData::from_text("log line two"),
+        );
+
+        assert_ne!(event_a.id(), event_b.id());
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn test_origin_serde() {
@@ -271,7 +346,7 @@ mod tests {
     #[test]
     fn test_serde_json_interop() {
         // Create a serde_json::Value
-        let serde_value = external_json::json!({
+        let serde_value = serde_json::json!({
             "name": "test",
             "count": 42,
             "active": true,
@@ -286,7 +361,7 @@ mod tests {
         let our_value = JsonValue::from(serde_value.clone());
 
         // Convert back to serde_json::Value
-        let back_to_serde = external_json::Value::from(our_value);
+        let back_to_serde = serde_json::Value::from(our_value);
 
         // Should be equal
         assert_eq!(serde_value, back_to_serde);
@@ -297,28 +372,23 @@ mod tests {
     fn test_full_event_serde_json_roundtrip() {
         use std::net::Ipv4Addr;
 
-        // Create an event with JSON data from serde_json
-        let serde_data = external_json::json!({
+        // A RawData::Json event, round-tripped as a whole Event (not just its
+        // Origin/RawData pieces — see event::field::serde_impl for the
+        // FieldValue/Timestamp impls and core_serde for Event's own impl).
+        let serde_data = serde_json::json!({
             "event_type": "authentication",
             "user": {"id": 123, "name": "admin"},
             "success": true
         });
 
-        let event = Event::new(
-            Timestamp::now(),
-            Timestamp::now(),
-            Origin::from_ip(Ip::V4(Ipv4Addr::new(10, 0, 0, 1))),
-            RawData::from_json(JsonValue::from(serde_data)),
-        );
+        let origin = Origin::from_ip(Ip::V4(Ipv4Addr::new(10, 0, 0, 1)));
+        let raw_data = RawData::from_json(JsonValue::from(serde_data));
+        let mut event = Event::new(Timestamp::now(), Timestamp::now(), origin, raw_data);
+        event.add_field("severity".to_string(), FieldValue::Int(9));
 
-        // Serialize the entire event
-        let serialized = serde_json::to_string(&event).unwrap();
+        let event_roundtrip: Event =
+            serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
 
-        // Deserialize it back
-        let deserialized: Event = serde_json::from_str(&serialized).unwrap();
-
-        // Verify the data is preserved
-        assert_eq!(event.origin(), deserialized.origin());
-        assert_eq!(event.raw_data(), deserialized.raw_data());
+        assert_eq!(event, event_roundtrip);
     }
 }

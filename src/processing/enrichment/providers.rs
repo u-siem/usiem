@@ -88,17 +88,17 @@ pub mod threat_severity {
 
     /// Check if a severity value is low
     pub fn is_low(severity: u8) -> bool {
-        severity >= 1 && severity <= 3
+        (1..=3).contains(&severity)
     }
 
     /// Check if a severity value is medium
     pub fn is_medium(severity: u8) -> bool {
-        severity >= 4 && severity <= 6
+        (4..=6).contains(&severity)
     }
 
     /// Check if a severity value is high
     pub fn is_high(severity: u8) -> bool {
-        severity >= 7 && severity <= 9
+        (7..=9).contains(&severity)
     }
 
     /// Check if a severity value is critical

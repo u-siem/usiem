@@ -66,7 +66,7 @@ use crate::event::field::Text;
 /// - **IP2Location** - Compatible with most database versions
 /// - **IPinfo** - Supports their API response format
 /// - **Custom sources** - Flexible optional fields for any provider
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GeoIp {
     /// ISO 3166-1 alpha-2 country code (2-letter code like "US", "GB")
     pub country_code: Option<Text>,
@@ -91,21 +91,6 @@ pub struct GeoIp {
 
     /// Internet Service Provider name (may differ from organization)
     pub isp: Option<Text>,
-}
-
-impl Default for GeoIp {
-    fn default() -> Self {
-        Self {
-            country_code: None,
-            country: None,
-            city: None,
-            latitude: None,
-            longitude: None,
-            asn: None,
-            organization: None,
-            isp: None,
-        }
-    }
 }
 
 /// Threat intelligence information for IP addresses and other indicators

@@ -241,7 +241,7 @@ fn test_url_security_analysis() {
 
         assert_eq!(url.is_https(), is_https);
 
-        let has_secure_scheme = url.is_https() || url.scheme().map_or(false, |s| s == "https");
+        let has_secure_scheme = url.is_https() || (url.scheme() == Some("https"));
         assert_eq!(has_secure_scheme, is_secure_scheme);
     }
 }

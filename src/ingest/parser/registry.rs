@@ -89,7 +89,7 @@ impl ParserRegistry {
         // Try parsers in source-specific priority order first
         let origin_hash = Self::hash_origin(&raw_event.source);
         if let Some(indices) = self.source_priorities.get(&origin_hash).cloned() {
-            for (_, &idx) in indices.iter().enumerate() {
+            for &idx in indices.iter() {
                 if let Some(parser) = self.parsers.get(idx) {
                     match (parser.parse_fn)(raw_event) {
                         result @ ParseResult::Success(_) => {
@@ -138,6 +138,11 @@ impl ParserRegistry {
         }
 
         // No parser matched - return the original RawEvent
+        crate::log_warn!(
+            "parser_registry",
+            "no registered parser matched a log from {:?}",
+            raw_event.source
+        );
         ParseResult::NoMatch(raw_event)
     }
 
@@ -160,10 +165,7 @@ impl ParserRegistry {
     fn add_parser_to_source_priority(&mut self, origin: &Origin, parser_idx: usize) {
         // Get or create priority list for this origin
         let origin_hash = Self::hash_origin(origin);
-        let indices = self
-            .source_priorities
-            .entry(origin_hash)
-            .or_insert_with(Vec::new);
+        let indices = self.source_priorities.entry(origin_hash).or_default();
 
         // Add to front if not already present
         if !indices.contains(&parser_idx) {

@@ -27,7 +27,7 @@ impl<'a> CommandLine<'a> {
 
     /// Get the original command line string
     pub fn raw(&self) -> &str {
-        &self.raw
+        self.raw
     }
 
     /// Get the program/executable name
@@ -70,10 +70,12 @@ impl<'a> CommandLine<'a> {
     /// - All characters are lowercase letters
     /// - Key length is <= 4 (to avoid treating real words as flags)
     pub fn get_combined_flags(&self, key: &str) -> Option<Vec<char>> {
-        if self.get_parameter(key).is_some() {
-            if key.len() > 1 && key.len() <= 4 && key.chars().all(|c| c.is_ascii_lowercase()) {
-                return Some(key.chars().collect());
-            }
+        if self.get_parameter(key).is_some()
+            && key.len() > 1
+            && key.len() <= 4
+            && key.chars().all(|c| c.is_ascii_lowercase())
+        {
+            return Some(key.chars().collect());
         }
         None
     }
