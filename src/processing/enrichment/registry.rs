@@ -42,6 +42,25 @@ impl EnrichmentRegistry {
         self.datasets.keys().copied().collect()
     }
 
+    /// A [`crate::capability::ComponentManifest`] for every registered
+    /// dataset. Only the name is known here (an [`AnyDataset`] carries no
+    /// description of its own) — a real deployment that wants richer
+    /// manifests for its datasets should additionally register them as
+    /// [`crate::capability::Component`]s in a [`crate::capability::CapabilityCatalog`].
+    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
+        self.datasets
+            .keys()
+            .map(|name| {
+                crate::capability::ComponentManifest::new(
+                    format!("dataset/{name}"),
+                    crate::capability::ComponentKind::Dataset,
+                    *name,
+                    "registered enrichment dataset",
+                )
+            })
+            .collect()
+    }
+
     /// Get all datasets (used by manager to consume registry)
     pub fn get_datasets(self) -> HashMap<&'static str, std::sync::Arc<dyn AnyDataset>> {
         self.datasets

@@ -135,6 +135,25 @@ impl Pipeline {
         &self.stages
     }
 
+    /// A [`crate::capability::ComponentManifest`] for every registered
+    /// stage, derived from the `name`/`description` it already carries —
+    /// stages stay plain `fn` pointers (no [`crate::capability::Component`]
+    /// impl), so this is how a `Pipeline` participates in the capability
+    /// catalog. See `crate::capability` module docs.
+    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
+        self.stages
+            .iter()
+            .map(|stage| {
+                crate::capability::ComponentManifest::new(
+                    format!("processor/{}", stage.name),
+                    crate::capability::ComponentKind::Processor,
+                    stage.name,
+                    stage.description,
+                )
+            })
+            .collect()
+    }
+
     /// Per-stage timing, status, and custom metrics collected across calls to [`Pipeline::run`].
     pub fn metadata(&self) -> &PipelineMetadata {
         &self.metadata

@@ -142,6 +142,19 @@ impl Template {
     pub fn template_id(&self) -> &Text {
         &self.template_id
     }
+
+    /// This template's raw, unrendered format string for `locale`, if one is
+    /// registered — e.g. for a caller that wants to inspect which `{key}`
+    /// placeholders a template references without actually rendering it
+    /// (see [`crate::mcp`]'s use of this for MCP prompt arguments).
+    pub fn format(&self, locale: &str) -> Option<&str> {
+        self.formats.get(locale).map(String::as_str)
+    }
+
+    /// Every locale this template has a format string registered for.
+    pub fn locales(&self) -> impl Iterator<Item = &Text> {
+        self.formats.keys()
+    }
 }
 
 /// Errors from [`TemplateRegistry::render`]/[`TemplateRegistry::rerender`].

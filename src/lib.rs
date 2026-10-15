@@ -39,6 +39,17 @@
 //!   (mirrors the `log` crate's shape, but hand-rolled rather than pulling in
 //!   an external dependency). Nothing is emitted unless a consuming
 //!   application installs a [`observability::Logger`].
+//! - [`security`] — authorization only, not authentication:
+//!   [`security::Principal`]/[`security::Role`]/[`security::Permission`] and
+//!   the [`security::Authorizer`] trait ([`security::RoleAuthorizer`] is this
+//!   crate's own bundled static-RBAC implementation), consulted by
+//!   [`processing::action::ActionRegistry::list_for`]/
+//!   [`processing::action::ActionRegistry::invoke_as`].
+//! - [`capability`] — [`capability::CapabilityCatalog`]/[`capability::Component`]:
+//!   a uniform, self-describing manifest for every kind of component
+//!   (collectors, parsers, sinks, datasets, action providers), so an MCP
+//!   server or an AI-driven UI/CLI has one place to discover what a running
+//!   SIEM is made of.
 //!
 //! # Quick start
 //!
@@ -61,10 +72,14 @@
 //! }
 //! ```
 
+pub mod capability;
 pub mod event;
 pub mod ingest;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod observability;
 pub mod processing;
+pub mod security;
 
 // Re-export commonly used types for easy access
 pub mod prelude {
@@ -99,7 +114,22 @@ pub mod prelude {
     // Response actions/commands
     pub use crate::processing::action::{
         Action, ActionDescriptor, ActionDescriptorBuilder, ActionError, ActionInvocationResult,
-        ActionOutcome, ActionRegistry, ActionStatus,
+        ActionOutcome, ActionRegistry, ActionStatus, AuthorizedInvocationResult,
+    };
+
+    // Who's calling — threaded through every `Action::execute`
+    pub use crate::processing::context::{CancellationHandle, InvocationContext, TenantId};
+
+    // Authorization: principals, roles, permissions, and the Authorizer trait
+    pub use crate::security::{
+        AllowAll, AuthzRequest, Decision, Permission, PermissionPattern, Principal, PrincipalKind,
+        Role, RoleAuthorizer,
+    };
+
+    // Capability catalog: every component's self-description
+    pub use crate::capability::{
+        CapabilityCatalog, Component, ComponentHealth, ComponentId, ComponentKind,
+        ComponentManifest, DatasetDescriptor, Dependency, PermissionDef, SchemaRef,
     };
 
     // Collection

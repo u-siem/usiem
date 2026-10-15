@@ -7,10 +7,27 @@ Guidance for AI coding agents (and humans) working in this repository.
 **uSIEM** is a modular, high-performance SIEM (Security Information and Event
 Management) framework written in Rust. It is a **library crate** — there is no
 binary and nothing to "run" — providing the core building blocks (event
-model, parsers, enrichment, a processing pipeline, and framework-only
-interfaces for I/O) for constructing custom SIEM solutions. Correlation/rule
-logic is deliberately out of scope — see the "trait-shape conventions" note
-below. MIT licensed.
+model, parsers, enrichment, a processing pipeline, a self-describing
+capability catalog, RBAC-style authorization, and framework-only interfaces
+for I/O) for constructing custom SIEM solutions. Correlation/rule logic is
+deliberately out of scope — see the "trait-shape conventions" note below.
+MIT licensed.
+
+**Authorization is in scope; authentication is not.** `src/security/` ships
+`Principal`/`Role`/`Permission`/`Authorizer` (plus a bundled static-RBAC
+`RoleAuthorizer`) so `ActionRegistry::list_for`/`invoke_as` can filter
+discovery and enforce invocation. It never sees a credential, token, or
+network request — turning a real credential into a `Principal` is the
+application's (or a transport crate's) job. Same carve-out shape as
+`Sink`/`Collector`: a policy-free contract in core, zero bundled I/O.
+
+**MCP support is Tier 1, data-model-only.** `src/mcp/` (feature `mcp`) turns
+a `CapabilityCatalog` + `Authorizer` into MCP's own tools/resources/prompts
+vocabulary and can execute a tool call end to end — but ships no JSON-RPC
+framing, no stdio/Streamable HTTP transport, and no OAuth flow. "Internal
+building blocks in, communication out": a satellite crate is expected to
+wrap this in the wire protocol and turn an authenticated caller into an
+`InvocationContext`.
 
 ## Tech stack
 
@@ -34,10 +51,13 @@ below. MIT licensed.
   `serde_json` — enabling `serde` also turns on `compact_str/serde`
   (`FieldValue::Object`'s `HashMap<Text, FieldValue>` needs `Text:
   Serialize`/`Deserialize` for `HashMap`'s own impl to apply; this isn't
-  skippable the way it looks at first). Dev-dependencies: `criterion`
-  (benchmarks), `serde_json` (unconditional — used by `#[cfg(feature =
-  "serde")]` tests as a concrete serde format, independent of the `json`
-  feature).
+  skippable the way it looks at first). A fourth feature, `mcp = ["json"]`,
+  gates `src/mcp/` — no new dependency of its own, it only needs
+  `serde_json::Value` and `Schema::to_json_schema` (`src/event/json_schema.rs`,
+  itself gated on `json`), which `json` already provides. Dev-dependencies:
+  `criterion` (benchmarks), `serde_json` (unconditional — used by
+  `#[cfg(feature = "serde")]` tests as a concrete serde format, independent
+  of the `json` feature).
 - **`CompactString: AsRef<_>` is ambiguous where `Cow<'static, str>`
   wasn't** — it implements `AsRef<str>`, `AsRef<[u8]>`, `AsRef<OsStr>`,
   `AsRef<Path>`. Bare `.as_ref()` on a `Text`/`CompactString` value needs
@@ -55,7 +75,8 @@ cargo build                      # build with default features
 cargo build --all-features
 cargo check --all-features       # do this before trusting a change compiles
 cargo test                       # unit + integration tests, default features
-cargo test --all-features        # required to exercise serde/json-gated tests
+cargo test --all-features        # required to exercise serde/json/mcp-gated tests
+cargo test --features mcp        # exercises src/mcp/ specifically (implies json)
 cargo test --test <file>         # run one integration-test file, e.g. field_integration_tests
 cargo test <name> -- --exact     # run one test by exact name
 cargo bench                      # all criterion benchmarks
@@ -74,10 +95,23 @@ defaults apply.
 
 ```
 src/
-├── lib.rs                  # crate root: pub mod event/ingest/observability/processing + `prelude`
+├── lib.rs                  # crate root: pub mod capability/event/ingest/mcp(feature)/observability/
+│                            # processing/security + `prelude`
 ├── observability.rs         # minimal dependency-free logging facade (Logger trait, log_*! macros)
+├── security/                # authorization ONLY, not authentication — Principal/PrincipalKind/Role/
+│                            # Permission/PermissionPattern/Authorizer/RoleAuthorizer/AllowAll/Decision.
+│                            # Never sees a credential/token/request; ActionRegistry::list_for/invoke_as
+│                            # are the only consumers in this crate.
+├── capability/              # ComponentManifest/Component/CapabilityCatalog — every kind of component's
+│                            # self-description (parsers/collectors/sinks/datasets/action providers) in
+│                            # one uniform shape, plus the catalog's own built-in siem.list_components/
+│                            # siem.component_health read-only introspection actions.
+├── mcp/                     # feature `mcp` (= `json`) only. McpSurface: CapabilityCatalog + Authorizer
+│                            # -> MCP tools/resources/prompts + call_tool. Data model only — no JSON-RPC
+│                            # framing, no transport, no OAuth. See its module docs before extending it.
 ├── event/                   # core data model: Event (core.rs, aliased CoreEvent — see gotcha below),
-│                            # RawEvent, FieldValue (typed field system), Origin, EventId, Schema,
+│                            # RawEvent, FieldValue (typed field system), Origin, EventId, Schema
+│                            # (+ json_schema.rs, feature `json`: Schema::to_json_schema, consumed by mcp),
 │                            # FieldMap (field/field_map.rs — a named bag of FieldValues, SmallVec-
 │                            # backed for small-N linear-scan lookup, Text-keyed so literal keys cost
 │                            # no allocation; used by Action's params/result data) + FieldLookup (the
@@ -86,10 +120,14 @@ src/
 ├── ingest/
 │   ├── collector.rs         # Collector trait — framework interface only, no concrete collectors
 │   └── parser/              # LogParser, ParserRegistry, common (Apache/JSON/Windows/CEF) +
-│                            # transport/syslog parsers
+│                            # transport/syslog parsers; registries also expose manifests() ->
+│                            # Vec<capability::ComponentManifest> (no Component impl — see below)
 └── processing/
     ├── metadata.rs          # unimplemented stub — do NOT confuse with src/event/metadata.rs (real code)
-    ├── pipeline.rs          # Pipeline/Processor: ordered, instrumented processing stages
+    ├── context.rs           # InvocationContext (who's calling + tenant/request_id/reason/cancellation),
+    │                        # threaded through every Action::execute call
+    ├── pipeline.rs          # Pipeline/Processor: ordered, instrumented processing stages; Pipeline also
+    │                        # exposes manifests() -> Vec<capability::ComponentManifest>
     ├── signal.rs            # Signal: an event/cluster evaluated against context or threat intel
     │                        # and flagged suspicious — not yet an alarm (Signal::into_event)
     ├── incident.rs          # Incident: analyst-facing aggregate of events/signals judged
@@ -98,11 +136,19 @@ src/
     ├── action.rs            # Action trait + ActionRegistry: the SIEM's one self-describing
     │                        # interaction surface (response actions, admin commands, and
     │                        # read-only queries alike) — a capability name can have many
-    │                        # registered providers; ActionRegistry::invoke fans out to all
-    └── enrichment/          # fully built-out dataset/registry/manager framework (~2900 LOC)
+    │                        # registered providers; ActionRegistry::invoke/invoke_as fan out to
+    │                        # all (list_for/invoke_as consult a security::Authorizer and enforce +
+    │                        # unconditionally audit; invoke/list stay unauthenticated, for trusted
+    │                        # in-process callers)
+    └── enrichment/          # fully built-out dataset/registry/manager framework (~2900 LOC);
+                             # EnrichmentRegistry also exposes manifests() -> Vec<ComponentManifest>
 tests/                       # black-box integration tests against the public API
 examples/                    # basic_pipeline.rs: full parse -> pipeline -> correlate -> signal ->
-                             # incident -> sink walkthrough; run with `cargo run --example basic_pipeline`
+                             # incident -> sink walkthrough; capability_catalog.rs: every component
+                             # kind self-describing through CapabilityCatalog; rbac.rs: RoleAuthorizer
+                             # filtering discovery + gating invocation, agent-vs-human approval;
+                             # mcp_surface.rs (feature `mcp`): CapabilityCatalog -> MCP tools/resources/
+                             # prompts, no transport. Run any with `cargo run --example <name>`.
 benches/                     # Criterion benchmarks (harness = false)
 ```
 
@@ -139,16 +185,23 @@ benches/                     # Criterion benchmarks (harness = false)
     buffer, etc.) are traits implemented by the consumer, with no bundled
     implementation: `Collector` (ingest), `Sink` (output), `Logger`
     (observability), `GeoIpDataset`/`ThreatIntelDataset` (enrichment
-    providers), `Action` (`processing/action.rs`). These mirror each other —
-    follow this pattern for new "external thing plugs into the framework"
-    extension points. `Action::execute` is the one deliberate deviation:
-    `&self`, not `&mut self` — an action is expected to run concurrently
-    (application code, a `Sink`'s side effect, and every other provider of
-    the same capability via `ActionRegistry::invoke`, all at once), so any
-    implementor-side mutable state must be interior mutability rather than
-    relying on exclusive access. `Action`/`ActionRegistry` is meant to be
-    the SIEM's *one* self-describing interaction surface — not just SOAR
-    response actions (`"block_ip"`), but admin/config commands and
+    providers), `Action` (`processing/action.rs`), `Component`
+    (`capability/mod.rs` — self-description; a type can implement `Collector`
+    without `Component` and vice versa, they're orthogonal). These mirror
+    each other — follow this pattern for new "external thing plugs into the
+    framework" extension points. `Action::execute` is the one deliberate
+    deviation: `&self`, not `&mut self` — an action is expected to run
+    concurrently (application code, a `Sink`'s side effect, and every other
+    provider of the same capability via `ActionRegistry::invoke`, all at
+    once), so any implementor-side mutable state must be interior mutability
+    rather than relying on exclusive access. Its signature is
+    `execute(&self, ctx: &processing::context::InvocationContext, params:
+    &FieldMap)` — `ctx` identifies the caller (see `security::Principal`) and
+    carries tenant/request-id/cancellation, but is *not* itself an
+    authorization check; only `ActionRegistry::invoke_as` (via a
+    `security::Authorizer`) enforces one. `Action`/`ActionRegistry` is meant
+    to be the SIEM's *one* self-describing interaction surface — not just
+    SOAR response actions (`"block_ip"`), but admin/config commands and
     read-only queries (`"search_logs"`) too, so an MCP server or an
     AI-driven UI/CLI has exactly one thing to discover and invoke. See
     `ActionDescriptor`'s `read_only`/`destructive`/`idempotent` fields

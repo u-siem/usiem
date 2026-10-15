@@ -64,6 +64,25 @@ impl ParserRegistry {
         &self.config
     }
 
+    /// A [`crate::capability::ComponentManifest`] for every registered
+    /// parser, derived from the `id`/`name`/`description` it already
+    /// carries — parsers stay plain `fn` pointers (no [`crate::capability::Component`]
+    /// impl), so this is how they participate in the capability catalog. See
+    /// `crate::capability` module docs.
+    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
+        self.parsers
+            .iter()
+            .map(|parser| {
+                crate::capability::ComponentManifest::new(
+                    format!("parser/{}", parser.id),
+                    crate::capability::ComponentKind::Parser,
+                    parser.name,
+                    parser.description,
+                )
+            })
+            .collect()
+    }
+
     /// Hash an Origin to get a u64 key for exact matching
     fn hash_origin(origin: &Origin) -> u64 {
         let mut hasher = DefaultHasher::new();

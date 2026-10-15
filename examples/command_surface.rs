@@ -31,7 +31,11 @@ impl Action for BlockIp {
             .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         self.descriptor()
             .params
             .validate_field_map(params)
@@ -69,7 +73,11 @@ impl Action for SetLogLevelAction {
         .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         self.descriptor()
             .params
             .validate_field_map(params)
@@ -113,7 +121,11 @@ impl Action for ToySearchAction {
         .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         self.descriptor()
             .params
             .validate_field_map(params)
@@ -152,6 +164,10 @@ fn main() {
         ],
     }));
 
+    // A trusted in-process caller with no external identity to check — see
+    // `examples/rbac.rs` for the enforced `invoke_as` path.
+    let ctx = InvocationContext::new(Principal::new("operator-cli", PrincipalKind::Service));
+
     // The self-description a caller who has never seen this codebase would
     // see — enough to know what each capability is, what it expects, and
     // how carefully to treat it, with no bespoke frontend involved.
@@ -170,7 +186,7 @@ fn main() {
     println!("\nFiring 'search_logs' (read-only, safe to call speculatively):");
     let mut search_params = FieldMap::new();
     search_params.insert("query", FieldValue::str("failed login"));
-    for result in registry.invoke("search_logs", &search_params) {
+    for result in registry.invoke(&ctx, "search_logs", &search_params) {
         if let Ok(outcome) = result.result {
             println!("  [{}] {}", result.provider, outcome.message.text);
         }
@@ -179,7 +195,7 @@ fn main() {
     println!("\nFiring 'set_log_level' (destructive: changes the SIEM's own behavior):");
     let mut level_params = FieldMap::new();
     level_params.insert("level", FieldValue::str("debug"));
-    for result in registry.invoke("set_log_level", &level_params) {
+    for result in registry.invoke(&ctx, "set_log_level", &level_params) {
         match result.result {
             Ok(outcome) => println!("  [{}] {}", result.provider, outcome.message.text),
             Err(err) => eprintln!("  [{}] failed: {err}", result.provider),
@@ -189,7 +205,7 @@ fn main() {
     println!("\nFiring 'block_ip' (destructive: an external response action):");
     let mut block_params = FieldMap::new();
     block_params.insert("ip", FieldValue::str("203.0.113.5"));
-    for result in registry.invoke("block_ip", &block_params) {
+    for result in registry.invoke(&ctx, "block_ip", &block_params) {
         if let Ok(outcome) = result.result {
             println!("  [{}] {}", result.provider, outcome.message.text);
         }

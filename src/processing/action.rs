@@ -74,11 +74,22 @@
 //! A `destructive`-hinted action can be just as consequential when it
 //! targets the SIEM's own configuration (e.g. silencing its own logging, or
 //! disabling the `Sink` that would otherwise raise an alert) as when it
-//! targets an external system. This crate does not gate firing on the hint
-//! in any way — the same "contracts only, zero policy" stance as everything
-//! else here. Deciding who may see or fire which actions (e.g. scoping which
-//! `ActionRegistry`, or which filtered subset of one, an MCP integration is
-//! handed) is entirely the application's responsibility.
+//! targets an external system. [`Action::execute`] itself still gates
+//! nothing on the hint — the same "contracts only, zero policy" stance as
+//! everything else here — but [`ActionRegistry`] now offers a second,
+//! enforced path: [`ActionRegistry::list_for`]/[`ActionRegistry::invoke_as`]
+//! consult a [`crate::security::Authorizer`] (this crate ships
+//! [`crate::security::RoleAuthorizer`] as a bundled static-RBAC mechanism)
+//! before a caller ever sees or fires a capability, and
+//! [`ActionRegistry::invoke_as`] unconditionally produces an audit
+//! [`crate::event::CoreEvent`] for every attempt — allowed, denied, or
+//! held for approval — via [`AuthorizedInvocationResult::audit`].
+//! [`ActionRegistry::list`]/[`ActionRegistry::invoke`] remain exactly as
+//! before: unauthenticated, for trusted in-process code with no
+//! [`crate::processing::context::InvocationContext`] to check. Any surface
+//! handed to a less-trusted caller (an MCP server, a web UI) should use the
+//! `_for`/`_as` methods instead — this crate cannot make that choice for the
+//! application. See [`crate::security`] for the full authorization model.
 //!
 //! # Example
 //!
@@ -86,8 +97,10 @@
 //! use usiem::processing::action::{
 //!     Action, ActionDescriptor, ActionError, ActionOutcome, ActionRegistry,
 //! };
+//! use usiem::processing::context::InvocationContext;
 //! use usiem::processing::message::LocalizedMessage;
 //! use usiem::event::field::{FieldMap, FieldValue};
+//! use usiem::security::{Principal, PrincipalKind};
 //! use std::sync::Arc;
 //!
 //! struct FirewallBlockIp;
@@ -95,7 +108,7 @@
 //!     fn descriptor(&self) -> ActionDescriptor {
 //!         ActionDescriptor::builder("block_ip", "firewall", "Blocks an IP at the perimeter").build()
 //!     }
-//!     fn execute(&self, _params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+//!     fn execute(&self, _ctx: &InvocationContext, _params: &FieldMap) -> Result<ActionOutcome, ActionError> {
 //!         Ok(ActionOutcome::success(LocalizedMessage::new("firewall.block_ip", "en-US", "blocked")))
 //!     }
 //! }
@@ -105,7 +118,7 @@
 //!     fn descriptor(&self) -> ActionDescriptor {
 //!         ActionDescriptor::builder("block_ip", "edr", "Isolates an IP on all managed endpoints").build()
 //!     }
-//!     fn execute(&self, _params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+//!     fn execute(&self, _ctx: &InvocationContext, _params: &FieldMap) -> Result<ActionOutcome, ActionError> {
 //!         Ok(ActionOutcome::success(LocalizedMessage::new("edr.block_ip", "en-US", "isolated")))
 //!     }
 //! }
@@ -115,9 +128,10 @@
 //! registry.register(Arc::new(EdrBlockIp));
 //!
 //! // A rule fires the capability by name, knowing nothing about either provider.
+//! let ctx = InvocationContext::new(Principal::new("system", PrincipalKind::Service));
 //! let mut params = FieldMap::new();
 //! params.insert("ip", FieldValue::str("203.0.113.5"));
-//! let results = registry.invoke("block_ip", &params);
+//! let results = registry.invoke(&ctx, "block_ip", &params);
 //!
 //! assert_eq!(results.len(), 2);
 //! assert!(results.iter().all(|r| matches!(&r.result, Ok(outcome) if outcome.is_success())));
@@ -126,7 +140,9 @@
 use crate::event::core::RawData;
 use crate::event::field::{FieldMap, FieldValue, Text, Timestamp};
 use crate::event::{CoreEvent, Origin, Schema, SchemaError, SchemaField};
+use crate::processing::context::InvocationContext;
 use crate::processing::message::LocalizedMessage;
+use crate::security::{Authorizer, AuthzRequest, Decision};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -143,6 +159,14 @@ pub trait Action: Send + Sync {
 
     /// Fire this action with the given parameters.
     ///
+    /// `ctx` identifies the caller and carries request-scoped metadata
+    /// (tenant, cancellation, audit reason) — see
+    /// [`crate::processing::context::InvocationContext`]. It is *not* a
+    /// promise that authorization already happened: only
+    /// [`ActionRegistry::invoke_as`] enforces that, via a
+    /// [`crate::security::Authorizer`]; an implementor that wants its own
+    /// additional checks can still inspect `ctx.principal` here.
+    ///
     /// Returns `Err` only when the action could not be attempted at all
     /// (e.g. malformed params, or the underlying integration couldn't even
     /// send a request) — implementors that want params checked up front can
@@ -151,7 +175,11 @@ pub trait Action: Send + Sync {
     /// [`ActionRegistry`]. A domain-level failure — the action ran but
     /// didn't succeed — is `Ok(ActionOutcome { status: ActionStatus::Failure,
     /// .. })`, not `Err`.
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError>;
+    fn execute(
+        &self,
+        ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError>;
 }
 
 /// Static metadata describing one [`Action`] implementation.
@@ -183,6 +211,12 @@ pub struct ActionDescriptor {
     /// Calling this provider twice with the same params has the same
     /// effect as calling it once. Mirrors MCP's `idempotentHint`.
     pub idempotent: bool,
+    /// The [`crate::security::Permission`] a caller must hold to invoke
+    /// this provider through [`ActionRegistry::invoke_as`]/
+    /// [`ActionRegistry::list_for`]. Defaults to `"action.invoke:<name>"`
+    /// (see [`ActionDescriptor::required_permission`]) when not set
+    /// explicitly via [`ActionDescriptorBuilder::permission`].
+    pub permission: Option<String>,
 }
 
 impl ActionDescriptor {
@@ -192,6 +226,15 @@ impl ActionDescriptor {
         description: impl Into<String>,
     ) -> ActionDescriptorBuilder {
         ActionDescriptorBuilder::new(name, provider, description)
+    }
+
+    /// The permission string a caller must hold to invoke this provider —
+    /// [`ActionDescriptor::permission`] if set explicitly, otherwise the
+    /// convention `"action.invoke:<name>"`.
+    pub fn required_permission(&self) -> String {
+        self.permission
+            .clone()
+            .unwrap_or_else(|| format!("action.invoke:{}", self.name))
     }
 }
 
@@ -205,6 +248,7 @@ pub struct ActionDescriptorBuilder {
     read_only: bool,
     destructive: Option<bool>,
     idempotent: bool,
+    permission: Option<String>,
 }
 
 impl ActionDescriptorBuilder {
@@ -222,6 +266,7 @@ impl ActionDescriptorBuilder {
             read_only: false,
             destructive: None,
             idempotent: false,
+            permission: None,
         }
     }
 
@@ -253,6 +298,13 @@ impl ActionDescriptorBuilder {
         self
     }
 
+    /// Override the [`crate::security::Permission`] required to invoke this
+    /// provider, instead of the `"action.invoke:<name>"` default.
+    pub fn permission(mut self, permission: impl Into<String>) -> Self {
+        self.permission = Some(permission.into());
+        self
+    }
+
     pub fn build(self) -> ActionDescriptor {
         ActionDescriptor {
             name: self.name,
@@ -262,6 +314,7 @@ impl ActionDescriptorBuilder {
             read_only: self.read_only,
             destructive: self.destructive.unwrap_or(!self.read_only),
             idempotent: self.idempotent,
+            permission: self.permission,
         }
     }
 }
@@ -383,6 +436,16 @@ pub enum ActionError {
     /// [`ActionStatus::Failure`], which means the action *did* run and has
     /// something to report.
     ExecutionFailed(Box<dyn std::error::Error + Send + Sync>),
+    /// [`ActionRegistry::invoke_as`] only: the caller's
+    /// [`crate::security::Authorizer`] returned
+    /// [`crate::security::Decision::Deny`]. `execute` was never called.
+    Unauthorized(LocalizedMessage),
+    /// [`ActionRegistry::invoke_as`] only: the caller's
+    /// [`crate::security::Authorizer`] returned
+    /// [`crate::security::Decision::RequireApproval`] — the underlying
+    /// grant exists, but this call is high-impact enough to need a human to
+    /// confirm it first. `execute` was never called.
+    ApprovalRequired(LocalizedMessage),
 }
 
 impl ActionError {
@@ -403,6 +466,8 @@ impl std::fmt::Display for ActionError {
                 Ok(())
             }
             ActionError::ExecutionFailed(err) => write!(f, "action execution failed: {err}"),
+            ActionError::Unauthorized(msg) => write!(f, "unauthorized: {}", msg.text),
+            ActionError::ApprovalRequired(msg) => write!(f, "approval required: {}", msg.text),
         }
     }
 }
@@ -411,7 +476,9 @@ impl std::error::Error for ActionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ActionError::ExecutionFailed(err) => Some(err.as_ref()),
-            ActionError::InvalidParams(_) => None,
+            ActionError::InvalidParams(_)
+            | ActionError::Unauthorized(_)
+            | ActionError::ApprovalRequired(_) => None,
         }
     }
 }
@@ -421,6 +488,20 @@ impl std::error::Error for ActionError {
 pub struct ActionInvocationResult {
     pub provider: String,
     pub result: Result<ActionOutcome, ActionError>,
+}
+
+/// One provider's result from a fan-out [`ActionRegistry::invoke_as`] call —
+/// like [`ActionInvocationResult`], plus the audit [`CoreEvent`] that was
+/// unconditionally produced for this attempt (see the module's "Security
+/// note"). `result` is `Err(ActionError::Unauthorized(_))` or
+/// `Err(ActionError::ApprovalRequired(_))` when the
+/// [`crate::security::Authorizer`] didn't allow the call outright — in both
+/// cases the provider's `execute` was never called.
+#[derive(Debug)]
+pub struct AuthorizedInvocationResult {
+    pub provider: String,
+    pub result: Result<ActionOutcome, ActionError>,
+    pub audit: CoreEvent,
 }
 
 /// A named, runtime-discoverable registry mapping a capability name to
@@ -468,23 +549,213 @@ impl ActionRegistry {
     /// `name` — not an error: an unimplemented capability in a given
     /// deployment is a valid state, not a caller mistake. Summarizing the
     /// results into one verdict is left to the caller.
-    pub fn invoke(&self, name: &str, params: &FieldMap) -> Vec<ActionInvocationResult> {
+    ///
+    /// Unauthenticated: no [`crate::security::Authorizer`] is consulted.
+    /// `ctx` is passed straight through to each provider's `execute` for its
+    /// own use (tenant scoping, audit context) — use
+    /// [`ActionRegistry::invoke_as`] instead when the caller is untrusted.
+    pub fn invoke(
+        &self,
+        ctx: &InvocationContext,
+        name: &str,
+        params: &FieldMap,
+    ) -> Vec<ActionInvocationResult> {
         self.providers(name)
             .into_iter()
             .map(|action| {
                 let provider = action.descriptor().provider;
                 ActionInvocationResult {
                     provider,
-                    result: action.execute(params),
+                    result: action.execute(ctx, params),
                 }
             })
             .collect()
+    }
+
+    /// Every registered provider's descriptor that `ctx.principal` is
+    /// allowed to invoke per `authz` — [`crate::security::Decision::Deny`]
+    /// hides a descriptor entirely;
+    /// [`crate::security::Decision::RequireApproval`] still lists it (the
+    /// caller may see the capability exists, just not fire it without
+    /// approval). This is the discovery half of the enforced path — see
+    /// [`ActionRegistry::invoke_as`] for the invocation half, and the
+    /// module's "Security note" for why both exist alongside
+    /// [`ActionRegistry::list`]/[`ActionRegistry::invoke`].
+    pub fn list_for(
+        &self,
+        ctx: &InvocationContext,
+        authz: &dyn Authorizer,
+    ) -> Vec<ActionDescriptor> {
+        self.list()
+            .into_iter()
+            .filter(|descriptor| {
+                let permission = descriptor.required_permission();
+                let request = AuthzRequest {
+                    permission: &permission,
+                    read_only: descriptor.read_only,
+                    destructive: descriptor.destructive,
+                    idempotent: descriptor.idempotent,
+                };
+                !matches!(authz.authorize(ctx, &request), Decision::Deny(_))
+            })
+            .collect()
+    }
+
+    /// Fan out to every provider registered under `name`, checking `ctx`
+    /// against `authz` before calling each one and unconditionally
+    /// producing an audit [`CoreEvent`] for the attempt — see
+    /// [`AuthorizedInvocationResult`] and the module's "Security note".
+    pub fn invoke_as(
+        &self,
+        ctx: &InvocationContext,
+        authz: &dyn Authorizer,
+        name: &str,
+        params: &FieldMap,
+    ) -> Vec<AuthorizedInvocationResult> {
+        self.providers(name)
+            .into_iter()
+            .map(|action| Self::invoke_one_as(action.as_ref(), ctx, authz, params))
+            .collect()
+    }
+
+    /// Like [`ActionRegistry::invoke_as`], but targets exactly one provider
+    /// registered under `name` — the one whose
+    /// [`ActionDescriptor::provider`] equals `provider` — instead of fanning
+    /// out to all of them. `None` if no such `(name, provider)` pair is
+    /// registered. Useful for a caller (e.g. an MCP surface) that has
+    /// already disambiguated which specific provider it wants to invoke.
+    pub fn invoke_provider_as(
+        &self,
+        ctx: &InvocationContext,
+        authz: &dyn Authorizer,
+        name: &str,
+        provider: &str,
+        params: &FieldMap,
+    ) -> Option<AuthorizedInvocationResult> {
+        let action = self
+            .providers(name)
+            .into_iter()
+            .find(|action| action.descriptor().provider == provider)?;
+        Some(Self::invoke_one_as(action.as_ref(), ctx, authz, params))
+    }
+
+    /// Shared authorize-then-execute-then-audit logic behind
+    /// [`ActionRegistry::invoke_as`]/[`ActionRegistry::invoke_provider_as`].
+    fn invoke_one_as(
+        action: &dyn Action,
+        ctx: &InvocationContext,
+        authz: &dyn Authorizer,
+        params: &FieldMap,
+    ) -> AuthorizedInvocationResult {
+        let descriptor = action.descriptor();
+        let permission = descriptor.required_permission();
+        let request = AuthzRequest {
+            permission: &permission,
+            read_only: descriptor.read_only,
+            destructive: descriptor.destructive,
+            idempotent: descriptor.idempotent,
+        };
+        let decision = authz.authorize(ctx, &request);
+        let result = match &decision {
+            Decision::Allow => action.execute(ctx, params),
+            Decision::Deny(msg) => Err(ActionError::Unauthorized(msg.clone())),
+            Decision::RequireApproval(msg) => Err(ActionError::ApprovalRequired(msg.clone())),
+        };
+        let audit = Self::audit_event(&descriptor, ctx, &decision, &result, params);
+        AuthorizedInvocationResult {
+            provider: descriptor.provider,
+            result,
+            audit,
+        }
+    }
+
+    /// Builds the mandatory audit [`CoreEvent`] for one [`ActionRegistry::invoke_as`]
+    /// attempt, regardless of its outcome. Fields are namespaced under
+    /// `action.*`/`principal.*`/`authz.*`/`tenant.*`/`request.*`, mirroring
+    /// [`ActionOutcome::into_event`]'s `action.*` convention.
+    fn audit_event(
+        descriptor: &ActionDescriptor,
+        ctx: &InvocationContext,
+        decision: &Decision,
+        result: &Result<ActionOutcome, ActionError>,
+        params: &FieldMap,
+    ) -> CoreEvent {
+        let now = Timestamp::now();
+        let mut event = CoreEvent::new(
+            now,
+            now,
+            Origin::from_hostname("usiem-action"),
+            RawData::from_text(format!(
+                "{} invocation by {}",
+                descriptor.name, ctx.principal.id
+            )),
+        );
+        event.add_field("event_type".to_string(), FieldValue::str("action_audit"));
+        event.add_field(
+            "action.name".to_string(),
+            FieldValue::string(descriptor.name.clone()),
+        );
+        event.add_field(
+            "action.provider".to_string(),
+            FieldValue::string(descriptor.provider.clone()),
+        );
+        event.add_field(
+            "principal.id".to_string(),
+            FieldValue::string(ctx.principal.id.to_string()),
+        );
+        event.add_field(
+            "principal.kind".to_string(),
+            FieldValue::string(format!("{:?}", ctx.principal.kind).to_lowercase()),
+        );
+        event.add_field(
+            "request.id".to_string(),
+            FieldValue::string(ctx.request_id.to_string()),
+        );
+        if let Some(tenant) = &ctx.tenant {
+            event.add_field(
+                "tenant.id".to_string(),
+                FieldValue::string(tenant.to_string()),
+            );
+        }
+        if let Some(reason) = &ctx.reason {
+            event.add_field(
+                "action.reason".to_string(),
+                FieldValue::string(reason.to_string()),
+            );
+        }
+        let decision_str = match decision {
+            Decision::Allow => "allow",
+            Decision::Deny(_) => "deny",
+            Decision::RequireApproval(_) => "require_approval",
+        };
+        event.add_field("authz.decision".to_string(), FieldValue::str(decision_str));
+        event.add_field(
+            "action.params".to_string(),
+            FieldValue::Object(params.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+        );
+        match result {
+            Ok(outcome) => {
+                event.add_field(
+                    "action.status".to_string(),
+                    FieldValue::str(outcome.status.as_str()),
+                );
+            }
+            Err(err) => {
+                event.add_field("action.status".to_string(), FieldValue::str("error"));
+                event.add_field(
+                    "action.error".to_string(),
+                    FieldValue::string(err.to_string()),
+                );
+            }
+        }
+        event
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::{Principal, PrincipalKind, RoleAuthorizer};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Test double: a provider requiring an `"ip"` param, tracking how many
@@ -517,7 +788,11 @@ mod tests {
                 .build()
         }
 
-        fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+        fn execute(
+            &self,
+            _ctx: &InvocationContext,
+            params: &FieldMap,
+        ) -> Result<ActionOutcome, ActionError> {
             self.descriptor()
                 .params
                 .validate_field_map(params)
@@ -537,10 +812,14 @@ mod tests {
         params
     }
 
+    fn system_ctx() -> InvocationContext {
+        InvocationContext::new(Principal::new("system", PrincipalKind::Service))
+    }
+
     #[test]
     fn test_direct_call_bypasses_the_registry() {
         let action = CountingAction::new("block_ip", "firewall");
-        let outcome = action.execute(&sample_params()).unwrap();
+        let outcome = action.execute(&system_ctx(), &sample_params()).unwrap();
         assert!(outcome.is_success());
         assert_eq!(action.call_count(), 1);
     }
@@ -548,7 +827,7 @@ mod tests {
     #[test]
     fn test_action_is_usable_as_trait_object() {
         let action: Arc<dyn Action> = Arc::new(CountingAction::new("block_ip", "firewall"));
-        let outcome = action.execute(&sample_params()).unwrap();
+        let outcome = action.execute(&system_ctx(), &sample_params()).unwrap();
         assert!(outcome.is_success());
     }
 
@@ -578,7 +857,7 @@ mod tests {
         registry.register(Arc::new(CountingAction::new("block_ip", "firewall")));
         registry.register(Arc::new(CountingAction::new("block_ip", "edr")));
 
-        let results = registry.invoke("block_ip", &sample_params());
+        let results = registry.invoke(&system_ctx(), "block_ip", &sample_params());
 
         assert_eq!(results.len(), 2);
         let mut providers: Vec<_> = results.iter().map(|r| r.provider.clone()).collect();
@@ -594,7 +873,11 @@ mod tests {
     #[test]
     fn test_invoke_on_unregistered_name_returns_empty_not_an_error() {
         let registry = ActionRegistry::new();
-        assert!(registry.invoke("isolate_host", &sample_params()).is_empty());
+        assert!(
+            registry
+                .invoke(&system_ctx(), "isolate_host", &sample_params())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -603,7 +886,7 @@ mod tests {
         let action = Arc::new(CountingAction::new("block_ip", "firewall"));
         registry.register(action.clone());
 
-        let results = registry.invoke("block_ip", &FieldMap::new());
+        let results = registry.invoke(&system_ctx(), "block_ip", &FieldMap::new());
 
         assert_eq!(results.len(), 1);
         assert!(matches!(
@@ -619,10 +902,121 @@ mod tests {
         let action = Arc::new(CountingAction::new("block_ip", "firewall"));
         registry.register(action.clone());
 
-        registry.invoke("block_ip", &sample_params());
-        action.execute(&sample_params()).unwrap();
+        registry.invoke(&system_ctx(), "block_ip", &sample_params());
+        action.execute(&system_ctx(), &sample_params()).unwrap();
 
         assert_eq!(action.call_count(), 2);
+    }
+
+    #[test]
+    fn test_list_for_hides_denied_and_keeps_allowed() {
+        let mut registry = ActionRegistry::new();
+        registry.register(Arc::new(CountingAction::new("block_ip", "firewall")));
+        let authz = RoleAuthorizer::new().with_default_roles();
+
+        let viewer_ctx = InvocationContext::new(Principal::user("alice", ["viewer"]));
+        assert!(registry.list_for(&viewer_ctx, &authz).is_empty());
+
+        let responder_ctx = InvocationContext::new(Principal::user("bob", ["responder"]));
+        assert_eq!(registry.list_for(&responder_ctx, &authz).len(), 1);
+    }
+
+    #[test]
+    fn test_invoke_as_denies_without_calling_execute_and_still_audits() {
+        let mut registry = ActionRegistry::new();
+        let action = Arc::new(CountingAction::new("block_ip", "firewall"));
+        registry.register(action.clone());
+        let authz = RoleAuthorizer::new().with_default_roles();
+        let ctx = InvocationContext::new(Principal::user("alice", ["viewer"]));
+
+        let results = registry.invoke_as(&ctx, &authz, "block_ip", &sample_params());
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            &results[0].result,
+            Err(ActionError::Unauthorized(_))
+        ));
+        assert_eq!(action.call_count(), 0);
+        assert_eq!(
+            results[0]
+                .audit
+                .get_field("authz.decision")
+                .and_then(|f| f.as_str()),
+            Some("deny")
+        );
+        assert_eq!(
+            results[0]
+                .audit
+                .get_field("principal.id")
+                .and_then(|f| f.as_str()),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn test_invoke_as_requires_approval_for_agent_on_destructive_action() {
+        let mut registry = ActionRegistry::new();
+        let action = Arc::new(CountingAction::new("block_ip", "firewall"));
+        registry.register(action.clone());
+        let authz = RoleAuthorizer::new().with_default_roles();
+        let ctx = InvocationContext::new(Principal::agent("copilot", ["responder"]));
+
+        let results = registry.invoke_as(&ctx, &authz, "block_ip", &sample_params());
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            &results[0].result,
+            Err(ActionError::ApprovalRequired(_))
+        ));
+        assert_eq!(action.call_count(), 0);
+        assert_eq!(
+            results[0]
+                .audit
+                .get_field("authz.decision")
+                .and_then(|f| f.as_str()),
+            Some("require_approval")
+        );
+    }
+
+    #[test]
+    fn test_invoke_as_allows_and_audits_a_granted_call() {
+        let mut registry = ActionRegistry::new();
+        let action = Arc::new(CountingAction::new("block_ip", "firewall"));
+        registry.register(action.clone());
+        let authz = RoleAuthorizer::new().with_default_roles();
+        let ctx = InvocationContext::new(Principal::user("bob", ["responder"]))
+            .with_reason("contain active intrusion");
+
+        let results = registry.invoke_as(&ctx, &authz, "block_ip", &sample_params());
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0].result, Ok(outcome) if outcome.is_success()));
+        assert_eq!(action.call_count(), 1);
+        assert_eq!(
+            results[0]
+                .audit
+                .get_field("authz.decision")
+                .and_then(|f| f.as_str()),
+            Some("allow")
+        );
+        assert_eq!(
+            results[0]
+                .audit
+                .get_field("action.reason")
+                .and_then(|f| f.as_str()),
+            Some("contain active intrusion")
+        );
+    }
+
+    #[test]
+    fn test_required_permission_defaults_to_action_invoke_name() {
+        let descriptor = ActionDescriptor::builder("block_ip", "firewall", "blocks an ip").build();
+        assert_eq!(descriptor.required_permission(), "action.invoke:block_ip");
+
+        let custom = ActionDescriptor::builder("block_ip", "firewall", "blocks an ip")
+            .permission("custom.perm")
+            .build();
+        assert_eq!(custom.required_permission(), "custom.perm");
     }
 
     #[test]

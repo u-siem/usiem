@@ -26,7 +26,11 @@ impl Action for FirewallBlockIp {
         .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         self.descriptor()
             .params
             .validate_field_map(params)
@@ -55,7 +59,11 @@ impl Action for EdrBlockIp {
         .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         self.descriptor()
             .params
             .validate_field_map(params)
@@ -93,12 +101,17 @@ fn main() {
 
     let mut sink = StdoutSink;
 
+    // A trusted in-process caller with no external identity to check —
+    // exactly what `ActionRegistry::invoke` (unauthenticated) is for. See
+    // `examples/rbac.rs` for the enforced `invoke_as` path.
+    let ctx = InvocationContext::new(Principal::new("rule-engine", PrincipalKind::Service));
+
     // --- A "rule" fires the capability by name, knowing nothing about ---
     // --- either provider: genuine plug-and-play. ---
     let mut params = FieldMap::new();
     params.insert("ip", FieldValue::str("203.0.113.5"));
 
-    let results = registry.invoke("block_ip", &params);
+    let results = registry.invoke(&ctx, "block_ip", &params);
     let succeeded = results
         .iter()
         .filter(|r| matches!(&r.result, Ok(outcome) if outcome.is_success()))
@@ -121,7 +134,7 @@ fn main() {
     }
 
     // --- The validation gate: missing the required "ip" param. ---
-    let bad_results = registry.invoke("block_ip", &FieldMap::new());
+    let bad_results = registry.invoke(&ctx, "block_ip", &FieldMap::new());
     for result in &bad_results {
         match &result.result {
             Err(ActionError::InvalidParams(errors)) => {
@@ -140,7 +153,7 @@ fn main() {
         .into_iter()
         .find(|action| action.descriptor().provider == "firewall")
     {
-        let outcome = firewall_only.execute(&params).unwrap();
+        let outcome = firewall_only.execute(&ctx, &params).unwrap();
         println!(
             "[rule] direct call to 'firewall' only: {}",
             outcome.message.text

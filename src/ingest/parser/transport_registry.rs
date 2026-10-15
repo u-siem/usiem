@@ -95,6 +95,23 @@ impl TransportRegistry {
         &self.config
     }
 
+    /// A [`crate::capability::ComponentManifest`] for every registered
+    /// transport parser — see [`crate::ingest::parser::registry::ParserRegistry::manifests`]
+    /// for why this is a plain method rather than a `Component` impl.
+    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
+        self.parsers
+            .iter()
+            .map(|parser| {
+                crate::capability::ComponentManifest::new(
+                    format!("transport_parser/{}", parser.id),
+                    crate::capability::ComponentKind::TransportParser,
+                    parser.name,
+                    parser.description,
+                )
+            })
+            .collect()
+    }
+
     /// Hash an Origin to get a u64 key for exact matching
     fn hash_origin(origin: &Origin) -> u64 {
         let mut hasher = DefaultHasher::new();

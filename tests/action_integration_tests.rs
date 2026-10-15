@@ -14,8 +14,14 @@ use usiem::event::{Origin, RawData};
 use usiem::processing::action::{
     Action, ActionDescriptor, ActionError, ActionOutcome, ActionRegistry,
 };
+use usiem::processing::context::InvocationContext;
 use usiem::processing::message::LocalizedMessage;
 use usiem::processing::sink::Sink;
+use usiem::security::{Principal, PrincipalKind};
+
+fn system_ctx() -> InvocationContext {
+    InvocationContext::new(Principal::new("system", PrincipalKind::Service))
+}
 
 /// A toy provider standing in for one component's implementation of a
 /// shared capability. Mutually unaware of any other provider registered
@@ -35,7 +41,11 @@ impl Action for ToyProvider {
         .build()
     }
 
-    fn execute(&self, params: &FieldMap) -> Result<ActionOutcome, ActionError> {
+    fn execute(
+        &self,
+        _ctx: &InvocationContext,
+        params: &FieldMap,
+    ) -> Result<ActionOutcome, ActionError> {
         let ip = params.getter("ip").as_str_or("<unknown>");
         Ok(ActionOutcome::success(LocalizedMessage::new(
             format!("{}.block_ip", self.provider),
@@ -61,7 +71,7 @@ impl Sink for RecordingSink {
             let mut params = FieldMap::new();
             params.insert("ip", FieldValue::string(ip.to_string()));
 
-            for result in self.actions.invoke("block_ip", &params) {
+            for result in self.actions.invoke(&system_ctx(), "block_ip", &params) {
                 if let Ok(outcome) = result.result {
                     let audit_event = outcome.into_event("block_ip", &result.provider, &params);
                     self.sent
@@ -129,7 +139,7 @@ fn test_direct_invoke_reaches_the_same_providers_outside_any_sink() {
     let mut params = FieldMap::new();
     params.insert("ip", FieldValue::str("198.51.100.9"));
 
-    let results = registry.invoke("block_ip", &params);
+    let results = registry.invoke(&system_ctx(), "block_ip", &params);
 
     assert_eq!(results.len(), 2);
     let mut providers: Vec<_> = results.iter().map(|r| r.provider.clone()).collect();

@@ -13,6 +13,9 @@ pub mod serde_impl;
 #[cfg(feature = "json")]
 pub mod json_interop;
 
+#[cfg(feature = "json")]
+pub mod json_schema;
+
 #[cfg(feature = "serde")]
 pub mod core_serde;
 

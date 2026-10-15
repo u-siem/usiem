@@ -36,6 +36,7 @@
 //!   documented anywhere yet.
 
 pub mod action;
+pub mod context;
 pub mod enrichment;
 pub mod incident;
 pub mod message;

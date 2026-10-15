@@ -40,6 +40,11 @@ default = ["metadata"]
 serde = ["dep:serde", "compact_str/serde"]
 json = ["dep:serde_json", "serde"]
 metadata = []
+# Tier-1 MCP support: the data model only (tools/resources/prompts derived
+# from the capability catalog and JSON Schema conversion) — no JSON-RPC
+# framing, no transport (stdio/HTTP), no OAuth. Those stay out of this
+# crate; see `src/mcp/mod.rs` module docs.
+mcp = ["json"]
 
 [[bench]]
 name = "parse_benchmarks"
@@ -52,3 +57,7 @@ harness = false
 [[bench]]
 name = "field_benchmarks"
 harness = false
+
+[[example]]
+name = "mcp_surface"
+required-features = ["mcp"]
