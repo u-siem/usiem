@@ -33,6 +33,7 @@
 
 use crate::processing::enrichment::core::AnyDataset;
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::IpAddr;
@@ -399,8 +400,8 @@ where
 /// }
 ///
 /// impl NetworkDataset<GeoIp> for MyGeoIpDataset {
-///     fn lookup_by_ip(&self, ip: &IpAddr) -> Option<&GeoIp> {
-///         self.networks.longest_prefix_match(ip)
+///     fn lookup_by_ip(&self, ip: &IpAddr) -> Option<Cow<'_, GeoIp>> {
+///         self.networks.longest_prefix_match(ip).map(Cow::Borrowed)
 ///     }
 ///     
 ///     fn network_count(&self) -> usize {
@@ -428,15 +429,19 @@ where
     ///
     /// # Returns
     ///
-    /// * `Some(&V)` - If a network containing the IP is found
+    /// * `Some(value)` - If a network containing the IP is found
     /// * `None` - If no network contains the IP
+    ///
+    /// In-memory tables return [`Cow::Borrowed`]; readers that decode a
+    /// record per lookup (memory-mapped GeoIP databases, say) return
+    /// [`Cow::Owned`].
     ///
     /// # Implementation Notes
     ///
     /// - Must handle both IPv4 and IPv6 addresses appropriately
     /// - Should return the most specific match when multiple ranges overlap
     /// - Must be thread-safe for concurrent access
-    fn lookup_by_ip(&self, ip: &IpAddr) -> Option<&V>;
+    fn lookup_by_ip(&self, ip: &IpAddr) -> Option<Cow<'_, V>>;
 
     /// Check if the dataset contains any networks
     ///
@@ -640,7 +645,7 @@ where
     }
 
     /// Look up a value by IP address
-    pub fn lookup_by_ip(&self, ip: &IpAddr) -> Option<&V> {
+    pub fn lookup_by_ip(&self, ip: &IpAddr) -> Option<Cow<'_, V>> {
         self.dataset.lookup_by_ip(ip)
     }
 
@@ -734,6 +739,22 @@ pub enum IpNetwork {
     },
 }
 
+/// A single address: `/32` for IPv4, `/128` for IPv6.
+impl From<IpAddr> for IpNetwork {
+    fn from(ip: IpAddr) -> Self {
+        match ip {
+            IpAddr::V4(addr) => IpNetwork::V4 {
+                addr,
+                prefix_len: 32,
+            },
+            IpAddr::V6(addr) => IpNetwork::V6 {
+                addr,
+                prefix_len: 128,
+            },
+        }
+    }
+}
+
 impl IpNetwork {
     /// Create a new IPv4 network
     pub fn new_v4(addr: std::net::Ipv4Addr, prefix_len: u8) -> Result<Self, NetworkError> {
@@ -803,6 +824,67 @@ impl IpNetwork {
         match self {
             IpNetwork::V4 { prefix_len, .. } | IpNetwork::V6 { prefix_len, .. } => *prefix_len,
         }
+    }
+}
+
+impl std::str::FromStr for IpNetwork {
+    type Err = NetworkError;
+
+    /// Parses `addr/prefix` or a bare address (a host network: `/32` or
+    /// `/128`). Host bits below the prefix are cleared, so `10.1.2.3/8`
+    /// becomes `10.0.0.0/8`.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim();
+        let (addr, prefix) = match text.split_once('/') {
+            Some((addr, prefix)) => (addr, Some(prefix)),
+            None => (text, None),
+        };
+        let addr: IpAddr = addr
+            .parse()
+            .map_err(|_| NetworkError::ParseError(format!("invalid address in {text:?}")))?;
+        let prefix = match prefix {
+            Some(p) => Some(
+                p.parse::<u8>()
+                    .map_err(|_| NetworkError::ParseError(format!("invalid prefix in {text:?}")))?,
+            ),
+            None => None,
+        };
+        match addr {
+            IpAddr::V4(addr) => {
+                let prefix_len = prefix.unwrap_or(32);
+                IpNetwork::new_v4(addr, prefix_len)?;
+                let bits = u32::from(addr) & v4_mask(prefix_len);
+                IpNetwork::new_v4(bits.into(), prefix_len)
+            }
+            IpAddr::V6(addr) => {
+                let prefix_len = prefix.unwrap_or(128);
+                IpNetwork::new_v6(addr, prefix_len)?;
+                let bits = u128::from(addr) & v6_mask(prefix_len);
+                IpNetwork::new_v6(bits.into(), prefix_len)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for IpNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.network_addr(), self.prefix_len())
+    }
+}
+
+/// Network mask for an IPv4 prefix length (at most 32).
+pub(crate) fn v4_mask(prefix_len: u8) -> u32 {
+    match prefix_len {
+        0 => 0,
+        p => !0u32 << (32 - u32::from(p.min(32))),
+    }
+}
+
+/// Network mask for an IPv6 prefix length (at most 128).
+pub(crate) fn v6_mask(prefix_len: u8) -> u128 {
+    match prefix_len {
+        0 => 0,
+        p => !0u128 << (128 - u32::from(p.min(128))),
     }
 }
 

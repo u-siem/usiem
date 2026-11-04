@@ -11,6 +11,7 @@
 //!
 //! * **[Core Abstractions](core)** - Type-safe interfaces and error handling
 //! * **[Dataset Implementations](dataset)** - Storage and update mechanisms  
+//! * **[CIDR tables](cidr)** - In-memory longest-prefix-match [`CidrDataset`]
 //! * **[Standard Types](types)** - Common enrichment data structures
 //! * **[Provider Interfaces](providers)** - External library integration points
 //! * **[Registry](registry)** - Dataset discovery and management
@@ -76,8 +77,10 @@
 //! ```
 
 // Module declarations
+pub mod cidr;
 pub mod core;
 pub mod dataset;
+pub mod domain;
 pub mod keys;
 pub mod manager;
 pub mod providers;
@@ -85,6 +88,7 @@ pub mod registry;
 pub mod types;
 
 // Re-exports for convenience
+pub use cidr::CidrDataset;
 pub use core::{AnyDataset, DatasetKey, EnrichmentError};
 pub use dataset::{
     DatasetUpdate,
@@ -97,6 +101,7 @@ pub use dataset::{
     NetworkTypedDataset,
     NetworkUpdate,
 };
+pub use domain::{DomainSet, normalize_domain};
 pub use keys::{AssetKey, GeoIpKey, ThreatIpKey, UserKey};
 pub use manager::{
     DatasetBuilder, DatasetStatistics, EnrichmentManager, ManagedDataset, ManagerConfig,
@@ -106,8 +111,6 @@ pub use providers::{
     GeoIpDataset,
     // Threat intelligence framework
     ThreatIntelDataset,
-    // Threat severity helpers
-    threat_severity,
 };
 pub use registry::EnrichmentRegistry;
 pub use types::{AssetInfo, GeoIp, ThreatInfo, UserProfile};

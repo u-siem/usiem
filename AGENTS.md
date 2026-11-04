@@ -112,6 +112,9 @@ src/
 ├── event/                   # core data model: Event (core.rs, aliased CoreEvent — see gotcha below),
 │                            # RawEvent, FieldValue (typed field system), Origin, EventId, Schema
 │                            # (+ json_schema.rs, feature `json`: Schema::to_json_schema, consumed by mcp),
+│                            # fields.rs: well-known (ECS + forensic-rs artifact.*) field-name
+│                            # constants — optional, nothing enforces them;
+│                            # json_interop.rs (feature `json`): FieldValue::from_json + JsonValue interop;
 │                            # FieldMap (field/field_map.rs — a named bag of FieldValues, SmallVec-
 │                            # backed for small-N linear-scan lookup, Text-keyed so literal keys cost
 │                            # no allocation; used by Action's params/result data) + FieldLookup (the
@@ -119,6 +122,8 @@ src/
 │                            # FieldMap without depending on either concretely)
 ├── ingest/
 │   ├── collector.rs         # Collector trait — framework interface only, no concrete collectors
+│   ├── framing.rs           # SyslogFramer: sans-IO RFC 6587 splitter (octet counting + LF framing,
+│   │                        # detected per message) — callers own the sockets
 │   └── parser/              # LogParser, ParserRegistry, common (Apache/JSON/Windows/CEF) +
 │                            # transport/syslog parsers; registries also expose manifests() ->
 │                            # Vec<capability::ComponentManifest> (no Component impl — see below)
@@ -128,11 +133,21 @@ src/
     │                        # threaded through every Action::execute call
     ├── pipeline.rs          # Pipeline/Processor: ordered, instrumented processing stages; Pipeline also
     │                        # exposes manifests() -> Vec<capability::ComponentManifest>
+    ├── rating.rs            # shared rating scales: Severity (+ Criticality/RiskLevel aliases,
+    │                        # from_score for 1-10 feeds) and Confidence (0..=100); signal.rs
+    │                        # re-exports both for the old processing::signal paths
     ├── signal.rs            # Signal: an event/cluster evaluated against context or threat intel
     │                        # and flagged suspicious — not yet an alarm (Signal::into_event)
     ├── incident.rs          # Incident: analyst-facing aggregate of events/signals judged
     │                        # significant by an application-defined rule (Incident::into_event)
     ├── sink.rs              # Sink trait — framework interface only, no concrete sinks
+    ├── workers.rs           # std-only runtime: bounded MPMC Queue (try_push for async producers,
+    │                        # pop_batch with linger) + WorkerPool (one Worker per named thread,
+    │                        # panics restart the worker). Processing is sync; async I/O is the host's
+    ├── lookup.rs            # async-I/O lookups without .await in stages: LookupPoint parks cache
+    │                        # misses, the host resolves them through AsyncLookup (returns a std Future),
+    │                        # complete() resumes them; SegmentedPipeline = Pipelines between points;
+    │                        # LookupCache (TTL + negative), Budget, CircuitBreaker, LookupDriver
     ├── action.rs            # Action trait + ActionRegistry: the SIEM's one self-describing
     │                        # interaction surface (response actions, admin commands, and
     │                        # read-only queries alike) — a capability name can have many
@@ -141,7 +156,10 @@ src/
     │                        # unconditionally audit; invoke/list stay unauthenticated, for trusted
     │                        # in-process callers)
     └── enrichment/          # fully built-out dataset/registry/manager framework (~2900 LOC);
-                             # EnrichmentRegistry also exposes manifests() -> Vec<ComponentManifest>
+                             # EnrichmentRegistry also exposes manifests() -> Vec<ComponentManifest>;
+                             # cidr.rs: CidrDataset, the one bundled NetworkDataset (in-memory
+                             # longest-prefix table for blocklists/zones). NetworkDataset::lookup_by_ip
+                             # returns Option<Cow<V>> so on-disk readers (mmdb) can return owned values
 tests/                       # black-box integration tests against the public API
 examples/                    # basic_pipeline.rs: full parse -> pipeline -> correlate -> signal ->
                              # incident -> sink walkthrough; capability_catalog.rs: every component
@@ -177,6 +195,13 @@ benches/                     # Criterion benchmarks (harness = false)
 - Enums are the primary tagged-union tool (`FieldValue`, `RawData`, `Origin`,
   `ParseResult`, `ProcessResult`, ...). Builders use a consuming-`self` fluent
   style (`ObjectBuilder`, `SchemaFieldBuilder`, `DatasetBuilder`).
+- **Typed values, not raw integers.** Every wall-clock instant is a
+  `Timestamp` (`event/field/time.rs`, i64 ns UTC) — including enrichment
+  dates and schema metadata. Severity, business criticality and account risk
+  are `processing::rating::Severity` (`Criticality`/`RiskLevel` are aliases);
+  certainty is `processing::rating::Confidence`. `std::time::Instant` in
+  `enrichment/manager.rs` is a monotonic merge timer, not a datetime — leave
+  it.
 - **Two different trait-shape conventions, used deliberately:**
   - Stateless, hot-path stages are plain `fn` pointers, **not** `dyn Trait`
     (`LogParser`/`ParserFn`, `Processor`/`ProcessorFn`, `TransportParser`).

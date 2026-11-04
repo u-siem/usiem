@@ -1,4 +1,54 @@
+use crate::event::field::{FieldValue, Text};
 use crate::event::json::JsonValue;
+
+impl FieldValue {
+    /// Recursively converts a `serde_json::Value` into a [`FieldValue`],
+    /// preserving nested objects/arrays as `FieldValue::Object`/`Array`
+    /// instead of stringifying them — `FieldValue` supports arbitrary nesting
+    /// natively, so there's no need to flatten. JSON `null` has no
+    /// `FieldValue` equivalent (the type has no `Null` variant, only "field
+    /// absent"), so `null` itself returns `None`, and null-valued object
+    /// fields and null array elements are dropped rather than becoming the
+    /// literal string `"null"`.
+    ///
+    /// Integers that fit in `i64` become `Int`, larger positive ones `Uint`,
+    /// everything else `Float`.
+    ///
+    /// ```
+    /// use usiem::event::FieldValue;
+    ///
+    /// let value = FieldValue::from_json(serde_json::json!([443, "a", null])).unwrap();
+    /// assert_eq!(
+    ///     value,
+    ///     FieldValue::Array(vec![FieldValue::Int(443), FieldValue::from("a")])
+    /// );
+    /// assert_eq!(FieldValue::from_json(serde_json::Value::Null), None);
+    /// ```
+    pub fn from_json(value: serde_json::Value) -> Option<FieldValue> {
+        match value {
+            serde_json::Value::Null => None,
+            serde_json::Value::Bool(b) => Some(FieldValue::Bool(b)),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Some(FieldValue::Int(i))
+                } else if let Some(u) = n.as_u64() {
+                    Some(FieldValue::Uint(u))
+                } else {
+                    n.as_f64().map(FieldValue::Float)
+                }
+            }
+            serde_json::Value::String(s) => Some(FieldValue::Str(Text::from(s))),
+            serde_json::Value::Array(arr) => Some(FieldValue::Array(
+                arr.into_iter().filter_map(FieldValue::from_json).collect(),
+            )),
+            serde_json::Value::Object(map) => Some(FieldValue::Object(
+                map.into_iter()
+                    .filter_map(|(k, v)| FieldValue::from_json(v).map(|fv| (Text::from(k), fv)))
+                    .collect(),
+            )),
+        }
+    }
+}
 
 // serde_json interop implementations
 impl From<serde_json::Value> for JsonValue {

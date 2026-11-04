@@ -1,8 +1,6 @@
 use crate::event::RawEvent;
 #[cfg(feature = "json")]
 use crate::event::field::FieldValue;
-#[cfg(feature = "json")]
-use crate::event::field::Text;
 use crate::event::field::Timestamp;
 #[cfg(feature = "json")]
 use crate::ingest::parser::err::ParsingError;
@@ -80,44 +78,14 @@ pub fn apache_common_parser() -> LogParser {
     )
 }
 
-/// Recursively converts a `serde_json::Value` into a [`FieldValue`], preserving
-/// nested objects/arrays as `FieldValue::Object`/`Array` instead of
-/// stringifying them — `FieldValue` supports arbitrary nesting natively, so
-/// there's no need to flatten. JSON `null` has no `FieldValue` equivalent (the
-/// type has no `Null` variant, only "field absent"), so null-valued object
-/// fields and null array elements are dropped rather than becoming the
-/// literal string `"null"`.
-#[cfg(feature = "json")]
-fn json_value_to_field_value(value: serde_json::Value) -> Option<FieldValue> {
-    match value {
-        serde_json::Value::Null => None,
-        serde_json::Value::Bool(b) => Some(FieldValue::Bool(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(FieldValue::Int(i))
-            } else if let Some(u) = n.as_u64() {
-                Some(FieldValue::Uint(u))
-            } else {
-                n.as_f64().map(FieldValue::Float)
-            }
-        }
-        serde_json::Value::String(s) => Some(FieldValue::Str(Text::from(s))),
-        serde_json::Value::Array(arr) => Some(FieldValue::Array(
-            arr.into_iter()
-                .filter_map(json_value_to_field_value)
-                .collect(),
-        )),
-        serde_json::Value::Object(map) => Some(FieldValue::Object(
-            map.into_iter()
-                .filter_map(|(k, v)| json_value_to_field_value(v).map(|fv| (Text::from(k), fv)))
-                .collect(),
-        )),
-    }
-}
-
 /// JSON log parser function for structured logs
 #[cfg(feature = "json")]
 pub fn parse_json(mut raw_event: RawEvent) -> ParseResult {
+    // Only a JSON object is a structured log; anything else is some other
+    // parser's input, not malformed JSON.
+    if !raw_event.log_text.trim_start().starts_with('{') {
+        return ParseResult::NoMatch(raw_event);
+    }
     match serde_json::from_str::<serde_json::Value>(raw_event.log_text.trim()) {
         Ok(json) => {
             // Set event type from JSON or default to "json_log"
@@ -142,10 +110,10 @@ pub fn parse_json(mut raw_event: RawEvent) -> ParseResult {
 
             // Convert top-level JSON keys into fields, recursing into nested
             // objects/arrays as FieldValue::Object/Array (see
-            // json_value_to_field_value) instead of stringifying them.
+            // FieldValue::from_json) instead of stringifying them.
             if let serde_json::Value::Object(map) = json {
                 for (key, value) in map {
-                    if let Some(field_value) = json_value_to_field_value(value) {
+                    if let Some(field_value) = FieldValue::from_json(value) {
                         raw_event.insert_field(key, field_value);
                     }
                 }
@@ -345,6 +313,15 @@ mod tests {
             }
             _ => panic!("Expected successful parse"),
         }
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_parser_passes_on_non_json_text() {
+        let raw = RawEvent::from_log("sshd: Accepted publickey for bob", "host");
+        assert!(matches!(parse_json(raw), ParseResult::NoMatch(_)));
+        let broken = RawEvent::from_log("{\"unterminated\": ", "host");
+        assert!(matches!(parse_json(broken), ParseResult::Error(_)));
     }
 
     #[test]

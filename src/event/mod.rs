@@ -1,5 +1,6 @@
 pub mod core;
 pub mod field;
+pub mod fields;
 pub mod json;
 pub mod metadata;
 pub mod origin;

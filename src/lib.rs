@@ -137,7 +137,10 @@ pub mod prelude {
 
     // Incident/signal
     pub use crate::processing::incident::{Evidence, Incident, IncidentId};
-    pub use crate::processing::signal::{Confidence, EventRef, Severity, Signal, SignalId};
+    pub use crate::processing::signal::{EventRef, Signal, SignalId};
+
+    // Shared rating scales
+    pub use crate::processing::rating::{Confidence, Criticality, RiskLevel, Severity};
 
     // Localized messages and message-catalog rendering
     pub use crate::processing::message::{

@@ -156,8 +156,9 @@ impl ParserRegistry {
             }
         }
 
-        // No parser matched - return the original RawEvent
-        crate::log_warn!(
+        // No parser matched - return the original RawEvent. Common for free-text
+        // syslog, so debug rather than warn.
+        crate::log_debug!(
             "parser_registry",
             "no registered parser matched a log from {:?}",
             raw_event.source

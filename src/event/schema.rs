@@ -1,5 +1,5 @@
 use super::core::Event;
-use super::field::{FieldLookup, FieldMap, FieldValue};
+use super::field::{FieldLookup, FieldMap, FieldValue, Timestamp};
 use regex::Regex;
 use std::collections::HashMap;
 
@@ -120,11 +120,11 @@ pub struct SchemaMetadata {
     /// Schema author
     pub author: Option<String>,
 
-    /// Creation timestamp
-    pub created: Option<u64>,
+    /// When the schema was created
+    pub created: Option<Timestamp>,
 
-    /// Last modified timestamp
-    pub modified: Option<u64>,
+    /// When the schema was last modified
+    pub modified: Option<Timestamp>,
 }
 
 impl Schema {

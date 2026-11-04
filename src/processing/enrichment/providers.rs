@@ -16,9 +16,9 @@
 //! * [`GeoIp`] - Geographic IP information structure
 //! * [`ThreatInfo`] - Threat intelligence data structure
 //!
-//! # Helper Modules
-//!
-//! * [`threat_severity`] - Utilities for working with threat severity scores
+//! Severity and confidence use the shared scales in
+//! [`crate::processing::rating`]; feeds that score 1-10 convert with
+//! [`crate::processing::rating::Severity::from_score`].
 //!
 //! # Design Principles
 //!
@@ -46,6 +46,7 @@
 //! ```
 
 use crate::processing::enrichment::dataset::NetworkDataset;
+use std::borrow::Cow;
 use std::net::IpAddr;
 
 // Re-export the enhanced types from the types module
@@ -55,7 +56,7 @@ pub use crate::processing::enrichment::types::{GeoIp, ThreatInfo};
 /// External GeoIP libraries implement this trait
 pub trait GeoIpDataset: NetworkDataset<GeoIp> {
     /// Look up geographic information by IP
-    fn lookup_geo(&self, ip: &IpAddr) -> Option<&GeoIp> {
+    fn lookup_geo(&self, ip: &IpAddr) -> Option<Cow<'_, GeoIp>> {
         self.lookup_by_ip(ip)
     }
 }
@@ -64,7 +65,7 @@ pub trait GeoIpDataset: NetworkDataset<GeoIp> {
 /// External threat intel libraries implement this trait
 pub trait ThreatIntelDataset: NetworkDataset<ThreatInfo> {
     /// Look up threat information by IP
-    fn lookup_threat(&self, ip: &IpAddr) -> Option<&ThreatInfo> {
+    fn lookup_threat(&self, ip: &IpAddr) -> Option<Cow<'_, ThreatInfo>> {
         self.lookup_by_ip(ip)
     }
 
@@ -74,44 +75,11 @@ pub trait ThreatIntelDataset: NetworkDataset<ThreatInfo> {
     }
 }
 
-/// Threat severity levels using the existing 1-10 scale from ThreatInfo
-/// but providing named constants for common severity levels
-pub mod threat_severity {
-    /// Low severity (1-3 on the scale)
-    pub const LOW: u8 = 2;
-    /// Medium severity (4-6 on the scale)
-    pub const MEDIUM: u8 = 5;
-    /// High severity (7-9 on the scale)
-    pub const HIGH: u8 = 8;
-    /// Critical severity (10 on the scale)
-    pub const CRITICAL: u8 = 10;
-
-    /// Check if a severity value is low
-    pub fn is_low(severity: u8) -> bool {
-        (1..=3).contains(&severity)
-    }
-
-    /// Check if a severity value is medium
-    pub fn is_medium(severity: u8) -> bool {
-        (4..=6).contains(&severity)
-    }
-
-    /// Check if a severity value is high
-    pub fn is_high(severity: u8) -> bool {
-        (7..=9).contains(&severity)
-    }
-
-    /// Check if a severity value is critical
-    pub fn is_critical(severity: u8) -> bool {
-        severity == 10
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::threat_severity;
     use super::*;
-    use crate::event::field::Text;
+    use crate::event::field::{Text, Timestamp};
+    use crate::processing::rating::{Confidence, Severity};
 
     #[test]
     fn test_geoip_data_structure() {
@@ -140,24 +108,24 @@ mod tests {
     fn test_threat_info_data_structure() {
         let threat = ThreatInfo {
             threat_type: Text::from("malware"),
-            severity: 8,
-            confidence: 90,
+            severity: Severity::High,
+            confidence: Confidence::new(90),
             description: Some(Text::from("Known botnet C&C")),
             source: Text::from("Mock Threat Feed"),
-            first_seen: Some(1640995200),
-            last_seen: Some(1672531200),
+            first_seen: Some(Timestamp::from_secs(1640995200)),
+            last_seen: Some(Timestamp::from_secs(1672531200)),
         };
 
         assert_eq!(threat.threat_type.to_string(), "malware");
-        assert_eq!(threat.severity, 8);
-        assert_eq!(threat.confidence, 90);
+        assert_eq!(threat.severity, Severity::High);
+        assert_eq!(threat.confidence.as_percent(), 90);
         assert_eq!(
             threat.description.as_ref().unwrap().to_string(),
             "Known botnet C&C"
         );
         assert_eq!(threat.source.to_string(), "Mock Threat Feed");
-        assert_eq!(threat.first_seen.unwrap(), 1640995200);
-        assert_eq!(threat.last_seen.unwrap(), 1672531200);
+        assert_eq!(threat.first_seen, Some(Timestamp::from_secs(1640995200)));
+        assert_eq!(threat.last_seen, Some(Timestamp::from_secs(1672531200)));
     }
 
     #[test]
@@ -165,8 +133,8 @@ mod tests {
         let threat = ThreatInfo::default();
 
         assert_eq!(threat.threat_type.to_string(), "unknown");
-        assert_eq!(threat.severity, 1);
-        assert_eq!(threat.confidence, 0);
+        assert_eq!(threat.severity, Severity::Low);
+        assert_eq!(threat.confidence, Confidence::NONE);
         assert!(threat.description.is_none());
         assert_eq!(threat.source.to_string(), "unknown");
         assert!(threat.first_seen.is_none());
@@ -200,54 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn test_severity_helpers() {
-        // Test low severity
-        assert!(threat_severity::is_low(1));
-        assert!(threat_severity::is_low(3));
-        assert!(!threat_severity::is_low(4));
-        assert!(!threat_severity::is_low(0)); // Out of range
-
-        // Test medium severity
-        assert!(threat_severity::is_medium(4));
-        assert!(threat_severity::is_medium(6));
-        assert!(!threat_severity::is_medium(3));
-        assert!(!threat_severity::is_medium(7));
-
-        // Test high severity
-        assert!(threat_severity::is_high(7));
-        assert!(threat_severity::is_high(9));
-        assert!(!threat_severity::is_high(6));
-        assert!(!threat_severity::is_high(10));
-
-        // Test critical severity
-        assert!(threat_severity::is_critical(10));
-        assert!(!threat_severity::is_critical(9));
-        assert!(!threat_severity::is_critical(11)); // Out of range
-    }
-
-    #[test]
-    fn test_severity_ranges() {
-        // Verify non-overlapping ranges
-        for severity in 1u8..=10u8 {
-            let count = [
-                threat_severity::is_low(severity),
-                threat_severity::is_medium(severity),
-                threat_severity::is_high(severity),
-                threat_severity::is_critical(severity),
-            ]
-            .iter()
-            .filter(|&&x| x)
-            .count();
-
-            assert_eq!(
-                count, 1,
-                "Severity {} should be in exactly one category",
-                severity
-            );
-        }
-    }
-
-    #[test]
     fn test_data_types_are_cloneable() {
         let geo = GeoIp::default();
         let _geo_clone = geo.clone();
@@ -260,8 +180,8 @@ mod tests {
     fn test_threat_confidence_ranges() {
         let low_confidence = ThreatInfo {
             threat_type: Text::from("suspicious"),
-            severity: 3,
-            confidence: 25,
+            severity: Severity::Low,
+            confidence: Confidence::new(25),
             description: None,
             source: Text::from("Automated Analysis"),
             first_seen: None,
@@ -270,16 +190,16 @@ mod tests {
 
         let high_confidence = ThreatInfo {
             threat_type: Text::from("malware"),
-            severity: 9,
-            confidence: 95,
+            severity: Severity::High,
+            confidence: Confidence::new(95),
             description: Some(Text::from("Confirmed by multiple sources")),
             source: Text::from("Threat Intelligence Feed"),
-            first_seen: Some(1640995200),
-            last_seen: Some(1672531200),
+            first_seen: Some(Timestamp::from_secs(1640995200)),
+            last_seen: Some(Timestamp::from_secs(1672531200)),
         };
 
-        assert!(low_confidence.confidence < 50);
-        assert!(high_confidence.confidence > 90);
+        assert!(low_confidence.confidence < Confidence::new(50));
+        assert!(high_confidence.confidence > Confidence::new(90));
         assert!(high_confidence.severity > low_confidence.severity);
     }
 }

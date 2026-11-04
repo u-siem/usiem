@@ -25,55 +25,9 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Severity of a [`Signal`] or [`crate::processing::incident::Incident`],
-/// ordered from least to most severe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Severity {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl Severity {
-    /// A lowercase string form, e.g. for use as a field value.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Severity::Low => "low",
-            Severity::Medium => "medium",
-            Severity::High => "high",
-            Severity::Critical => "critical",
-        }
-    }
-}
-
-/// How sure the detection logic is that a [`Signal`]/
-/// [`crate::processing::incident::Incident`] is real — distinct from
-/// [`Severity`] (how bad it would be if true). A percentage, clamped to
-/// `0..=100`.
-///
-/// # Example
-///
-/// ```
-/// use usiem::processing::signal::Confidence;
-///
-/// let confidence = Confidence::new(150); // clamped
-/// assert_eq!(confidence.as_percent(), 100);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Confidence(u8);
-
-impl Confidence {
-    /// Create a `Confidence` from a percentage, clamped to `0..=100`.
-    pub fn new(percent: u8) -> Self {
-        Self(percent.min(100))
-    }
-
-    /// The confidence as a percentage (`0..=100`).
-    pub fn as_percent(&self) -> u8 {
-        self.0
-    }
-}
+// Moved to `rating` so enrichment types share them; re-exported here so
+// `processing::signal::{Severity, Confidence}` keeps working.
+pub use crate::processing::rating::{Confidence, Severity};
 
 /// A lightweight pointer back to a raw [`CoreEvent`] — its [`EventId`] plus
 /// its [`Timestamp`], not the full event, so referencing it doesn't

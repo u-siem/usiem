@@ -1,4 +1,13 @@
-/// Specialized time field wrapping i64 nanoseconds since Unix epoch (UTC)
+/// The datetime type of usiem: i64 nanoseconds since the Unix epoch (UTC).
+///
+/// Every wall-clock instant in the crate is a `Timestamp`: event times,
+/// signal/incident times, enrichment dates (`ThreatInfo::first_seen`),
+/// schema metadata. Use it for new fields rather than raw `u64`/`i64`
+/// seconds. Monotonic timers for scheduling (`std::time::Instant`) are a
+/// different thing and stay as they are.
+///
+/// Covers 1677-09-21 to 2262-04-11. Parse with [`str::parse`] /
+/// [`Timestamp::from_rfc3339`]; the `Default` is the epoch.
 ///
 /// All timestamps in the SIEM system are stored and handled in UTC to ensure
 /// consistent time handling across different systems, timezones, and log sources.
@@ -18,7 +27,7 @@
 /// - Consistent time-based queries and analysis  
 /// - No ambiguity during daylight saving time transitions
 /// - Reliable forensic timeline reconstruction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Timestamp(pub i64);
 
 #[derive(Debug, Clone)]
@@ -268,6 +277,15 @@ impl std::ops::Sub<Timestamp> for Timestamp {
     }
 }
 
+impl std::str::FromStr for Timestamp {
+    type Err = TimeParseError;
+
+    /// RFC 3339 (`"2025-10-11T10:30:00Z"`, offsets converted to UTC).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_rfc3339(s.trim())
+    }
+}
+
 impl From<i64> for Timestamp {
     fn from(nanos: i64) -> Self {
         Self::from_nanos(nanos)
@@ -342,6 +360,18 @@ mod tests {
                 case
             );
         }
+    }
+
+    #[test]
+    fn test_from_str_and_default() {
+        let ts: Timestamp = "2025-10-11T12:30:00+02:00".parse().unwrap();
+        assert_eq!(ts, Timestamp::from_rfc3339("2025-10-11T10:30:00Z").unwrap());
+        assert!("yesterday".parse::<Timestamp>().is_err());
+        assert_eq!(Timestamp::default(), Timestamp::from_nanos(0));
+
+        let mut seen = std::collections::HashSet::new();
+        assert!(seen.insert(ts));
+        assert!(!seen.insert(ts));
     }
 
     #[test]

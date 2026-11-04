@@ -8,13 +8,17 @@ use std::sync::LazyLock;
 
 // Static regex for RFC3164 syslog format
 static SYSLOG_RFC3164_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^<(\d+)>(\w{3} \d{1,2} \d{2}:\d{2}:\d{2}) (\S+) ([^:\[]+)(?:\[(\d+)\])?: (.*)$"#)
-        .expect("Invalid Syslog RFC3164 regex")
+    // Single-digit days are space-padded ("Nov  4") by most senders.
+    Regex::new(
+        r#"^<(\d+)>(\w{3} {1,2}\d{1,2} \d{2}:\d{2}:\d{2}) (\S+) ([^:\[]+)(?:\[(\d+)\])?: (.*)$"#,
+    )
+    .expect("Invalid Syslog RFC3164 regex")
 });
 
 // Static regex for RFC5424 syslog format
 static SYSLOG_RFC5424_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^<(\d+)>(\d+) (\S+) (\S+) (\S+) (\S+) (\S+) (\[.*?\])? (.*)$"#)
+    // STRUCTURED-DATA is "-" or one or more [elements]; MSG is optional.
+    Regex::new(r#"^<(\d+)>(\d+) (\S+) (\S+) (\S+) (\S+) (\S+) (-|(?:\[.*?\])+)(?: (.*))?$"#)
         .expect("Invalid Syslog RFC5424 regex")
 });
 
@@ -161,7 +165,7 @@ pub fn parse_syslog_rfc5424_transport(log_text: &str, source: Origin) -> Transpo
         let proc_id = captures.get(6).unwrap().as_str();
         let msg_id = captures.get(7).unwrap().as_str();
         let structured_data = captures.get(8).map(|m| m.as_str()).unwrap_or("-");
-        let message_body = captures.get(9).unwrap().as_str();
+        let message_body = captures.get(9).map_or("", |m| m.as_str());
 
         // Create RawEvent with message body for content parsing.
         // `timestamp` (arrival time) is ingest time; `original_time` becomes
@@ -319,6 +323,44 @@ mod tests {
             }
             _ => panic!("Expected successful transport parse"),
         }
+    }
+
+    #[test]
+    fn rfc3164_accepts_space_padded_day() {
+        let log = "<13>Nov  4 09:05:01 nas CRON[812]: (root) CMD (run-parts)";
+        let TransportResult::Success(raw) =
+            parse_syslog_rfc3164_transport(log, Origin::Hostname("t".into()))
+        else {
+            panic!("padded day should match");
+        };
+        assert_eq!(raw.log_text, "(root) CMD (run-parts)");
+        assert_eq!(
+            raw.fields.get("transport.syslog.process").unwrap().as_str(),
+            Some("CRON")
+        );
+    }
+
+    #[test]
+    fn rfc5424_without_structured_data_or_message() {
+        let log = "<34>1 2024-05-01T10:00:00Z host app 42 ID7 - 'su root' failed";
+        let TransportResult::Success(raw) =
+            parse_syslog_rfc5424_transport(log, Origin::Hostname("t".into()))
+        else {
+            panic!("nil structured data should match");
+        };
+        assert_eq!(raw.log_text, "'su root' failed");
+        assert!(
+            !raw.fields
+                .contains_key("transport.syslog.structured_data_raw")
+        );
+
+        let bare = "<34>1 2024-05-01T10:00:00Z host app - - -";
+        let TransportResult::Success(raw) =
+            parse_syslog_rfc5424_transport(bare, Origin::Hostname("t".into()))
+        else {
+            panic!("a message-less frame should match");
+        };
+        assert_eq!(raw.log_text, "");
     }
 
     #[test]

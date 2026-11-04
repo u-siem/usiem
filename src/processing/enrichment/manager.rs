@@ -410,7 +410,7 @@ impl EnrichmentManager {
                     AssetInfo {
                         asset_type: Text::from("server"),
                         owner: Some(Text::from("ops-team")),
-                        criticality: 5,
+                        criticality: crate::processing::rating::Criticality::Medium,
                         location: Some(Text::from("datacenter1")),
                         tags: vec![Text::from("production"), Text::from("web-server")],
                     },

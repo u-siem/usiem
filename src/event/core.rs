@@ -80,6 +80,12 @@ impl Event {
         self.fields.insert(key, value);
     }
 
+    /// Makes room for `additional` more fields, so a stage adding several
+    /// (enrichment) rehashes once instead of on every insert.
+    pub fn reserve_fields(&mut self, additional: usize) {
+        self.fields.reserve(additional);
+    }
+
     /// Get a specific field value by key
     pub fn get_field(&self, key: &str) -> Option<&FieldValue> {
         self.fields.get(key)

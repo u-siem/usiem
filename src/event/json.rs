@@ -170,8 +170,12 @@ impl fmt::Display for JsonValue {
                 write!(f, "]")
             }
             JsonValue::Object(obj) => {
+                // Sorted keys: the text (and so `Event::id`, which hashes it)
+                // must not depend on `HashMap` iteration order.
+                let mut entries: Vec<_> = obj.iter().collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 write!(f, "{{")?;
-                for (i, (key, value)) in obj.iter().enumerate() {
+                for (i, (key, value)) in entries.into_iter().enumerate() {
                     if i > 0 {
                         write!(f, ",")?;
                     }
@@ -255,6 +259,19 @@ impl<K: Into<String>, V: Into<JsonValue>> From<HashMap<K, V>> for JsonValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_sorts_object_keys() {
+        let keys = ["zeta", "alpha", "mid", "beta", "omega", "k1", "k0"];
+        let obj = JsonValue::object(keys.iter().map(|k| (*k, JsonValue::bool(true))));
+        assert_eq!(
+            obj.to_string(),
+            r#"{"alpha":true,"beta":true,"k0":true,"k1":true,"mid":true,"omega":true,"zeta":true}"#
+        );
+        // A rebuilt map (new hasher state) renders the same text.
+        let rebuilt = JsonValue::object(keys.iter().rev().map(|k| (*k, JsonValue::bool(true))));
+        assert_eq!(rebuilt.to_string(), obj.to_string());
+    }
 
     #[test]
     fn test_json_value_creation() {

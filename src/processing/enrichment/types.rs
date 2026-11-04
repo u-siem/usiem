@@ -5,7 +5,7 @@
 //! designed to be:
 //!
 //! - **Comprehensive** - Cover the most common enrichment data needs
-//! - **Extensible** - Allow for optional fields and future expansion  
+//! - **Extensible** - Allow for optional fields and future expansion
 //! - **Efficient** - Use appropriate data types for performance
 //! - **Interoperable** - Compatible with external data sources and formats
 //!
@@ -13,7 +13,7 @@
 //!
 //! * [`GeoIp`] - Geographic and network information for IP addresses
 //! * [`ThreatInfo`] - Threat intelligence data with severity and confidence
-//! * [`AssetInfo`] - Asset management and inventory information  
+//! * [`AssetInfo`] - Asset management and inventory information
 //! * [`UserProfile`] - User identity and risk profile information
 //!
 //! # Design Principles
@@ -21,11 +21,15 @@
 //! All types follow consistent design principles:
 //! - Use `Option<T>` for fields that may be missing from data sources
 //! - Use `Text` type for string data to maintain consistency with the event system
-//! - Include severity/risk scores using standard scales (1-10, 0-100)
-//! - Support temporal data with Unix timestamps for interoperability
+//! - Ratings use the shared scales in [`crate::processing::rating`]:
+//!   [`Severity`] (and its [`Criticality`]/[`RiskLevel`] aliases) and
+//!   [`Confidence`], the same types a [`crate::processing::signal::Signal`]
+//!   carries, so a lookup result feeds a signal without conversion
+//! - Dates are [`Timestamp`]s, usiem's one datetime type
 //! - Implement `Clone` and `Debug` for usability in the enrichment system
 
-use crate::event::field::Text;
+use crate::event::field::{Text, Timestamp};
+use crate::processing::rating::{Confidence, Criticality, RiskLevel, Severity};
 
 /// Geographic and network information for IP addresses
 ///
@@ -37,7 +41,7 @@ use crate::event::field::Text;
 /// # Field Descriptions
 ///
 /// * `country_code` - ISO 3166-1 alpha-2 country code (e.g., "US", "GB", "DE")
-/// * `country` - Full country name (e.g., "United States", "Germany")  
+/// * `country` - Full country name (e.g., "United States", "Germany")
 /// * `city` - City name where the IP is located
 /// * `latitude`/`longitude` - Geographic coordinates (WGS84 decimal degrees)
 /// * `asn` - Autonomous System Number identifying the network operator
@@ -80,7 +84,7 @@ pub struct GeoIp {
     /// Latitude coordinate in decimal degrees (WGS84)
     pub latitude: Option<f64>,
 
-    /// Longitude coordinate in decimal degrees (WGS84)  
+    /// Longitude coordinate in decimal degrees (WGS84)
     pub longitude: Option<f64>,
 
     /// Autonomous System Number (ASN) of the network operator
@@ -99,26 +103,21 @@ pub struct GeoIp {
 /// including commercial threat feeds, open source intelligence (OSINT),
 /// internal security research, and collaborative sharing platforms.
 ///
-/// # Severity Scale
+/// # Ratings
 ///
-/// The severity field uses a 1-10 scale where:
-/// - **1-3**: Low severity (informational, suspicious activity)
-/// - **4-6**: Medium severity (likely malicious, increased monitoring)
-/// - **7-9**: High severity (confirmed malicious, immediate action)
-/// - **10**: Critical severity (active attack, emergency response)
-///
-/// # Confidence Scale  
-///
-/// The confidence field uses a 0-100 scale representing:
-/// - **0-25**: Low confidence (unverified, single source)
-/// - **26-50**: Medium confidence (some verification, multiple sources)
-/// - **51-75**: High confidence (well-verified, reputable sources)
-/// - **76-100**: Very high confidence (confirmed, authoritative sources)
+/// - `severity` is a [`Severity`]: `Low` (informational, suspicious),
+///   `Medium` (likely malicious), `High` (confirmed malicious) or `Critical`
+///   (active attack). Feeds that score 1-10 convert with
+///   [`Severity::from_score`].
+/// - `confidence` is a [`Confidence`] percentage: roughly 0-25 unverified,
+///   26-50 some verification, 51-75 well verified, 76-100 confirmed by
+///   authoritative sources.
+/// - `first_seen`/`last_seen` are [`Timestamp`]s (UTC).
 ///
 /// # Common Threat Types
 ///
 /// * `malware` - Known malware command & control servers
-/// * `phishing` - Phishing and fraud-related infrastructure  
+/// * `phishing` - Phishing and fraud-related infrastructure
 /// * `botnet` - Botnet command & control servers
 /// * `scanner` - Port scanners and reconnaissance tools
 /// * `spam` - Email spam sources and open relays
@@ -130,24 +129,24 @@ pub struct GeoIp {
 /// ```rust,no_compile,no_run
 /// let threat = ThreatInfo {
 ///     threat_type: Text::from("botnet"),
-///     severity: 8,  // High severity
-///     confidence: 85,  // Very high confidence
+///     severity: Severity::High,
+///     confidence: Confidence::new(85),
 ///     description: Some(Text::from("Mirai botnet C&C server")),
 ///     source: Text::from("SecurityVendor ThreatFeed v2.1"),
-///     first_seen: Some(1640995200), // Unix timestamp
-///     last_seen: Some(1672531200),  // Unix timestamp
+///     first_seen: Some(Timestamp::from_secs(1640995200)),
+///     last_seen: Some(Timestamp::from_secs(1672531200)),
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThreatInfo {
     /// Type of threat (e.g., "malware", "phishing", "botnet", "scanner")
     pub threat_type: Text,
 
-    /// Threat severity on a 1-10 scale (1=low, 10=critical)
-    pub severity: u8,
+    /// How bad the threat is
+    pub severity: Severity,
 
-    /// Confidence level in the assessment (0-100 scale, 100=highest confidence)
-    pub confidence: u8,
+    /// How sure the source is of the assessment
+    pub confidence: Confidence,
 
     /// Human-readable description of the threat
     pub description: Option<Text>,
@@ -155,19 +154,26 @@ pub struct ThreatInfo {
     /// Source of the threat intelligence (vendor, feed name, version)
     pub source: Text,
 
-    /// When this indicator was first observed (Unix timestamp)
-    pub first_seen: Option<u64>,
+    /// When this indicator was first observed
+    pub first_seen: Option<Timestamp>,
 
-    /// When this indicator was last observed (Unix timestamp)  
-    pub last_seen: Option<u64>,
+    /// When this indicator was last observed
+    pub last_seen: Option<Timestamp>,
+}
+
+impl ThreatInfo {
+    /// Whether this threat is at least as severe as `level`.
+    pub fn is_at_least(&self, level: Severity) -> bool {
+        self.severity >= level
+    }
 }
 
 impl Default for ThreatInfo {
     fn default() -> Self {
         Self {
             threat_type: Text::from("unknown"),
-            severity: 1,
-            confidence: 0,
+            severity: Severity::Low,
+            confidence: Confidence::NONE,
             description: None,
             source: Text::from("unknown"),
             first_seen: None,
@@ -182,14 +188,14 @@ impl Default for ThreatInfo {
 /// network devices, etc.) that can be used to enrich security events with
 /// contextual information about the affected systems.
 ///
-/// # Criticality Scale
+/// # Criticality
 ///
-/// The criticality field uses a 1-10 scale representing business impact:
-/// - **1-2**: Non-critical (development, testing, personal devices)
-/// - **3-4**: Low criticality (internal tools, backup systems)
-/// - **5-6**: Medium criticality (business applications, shared resources)
-/// - **7-8**: High criticality (production systems, customer-facing services)
-/// - **9-10**: Critical (core infrastructure, revenue-generating systems)
+/// `criticality` is a [`Criticality`] (the [`Severity`] scale) for
+/// business impact:
+/// - **Low**: development, testing, personal devices
+/// - **Medium**: internal tools, business applications, shared resources
+/// - **High**: production systems, customer-facing services
+/// - **Critical**: core infrastructure, revenue-generating systems
 ///
 /// # Common Asset Types
 ///
@@ -207,7 +213,7 @@ impl Default for ThreatInfo {
 /// let asset = AssetInfo {
 ///     asset_type: Text::from("server"),
 ///     owner: Some(Text::from("IT Operations Team")),
-///     criticality: 9,  // Critical system
+///     criticality: Criticality::Critical,
 ///     location: Some(Text::from("DataCenter-East-Rack42")),
 ///     tags: vec![
 ///         Text::from("production"),
@@ -216,7 +222,7 @@ impl Default for ThreatInfo {
 ///     ],
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssetInfo {
     /// Type of asset (e.g., "server", "workstation", "network_device")
     pub asset_type: Text,
@@ -224,8 +230,8 @@ pub struct AssetInfo {
     /// Owner or responsible team/person for this asset
     pub owner: Option<Text>,
 
-    /// Business criticality on a 1-10 scale (1=non-critical, 10=critical)
-    pub criticality: u8,
+    /// Business impact if this asset is compromised
+    pub criticality: Criticality,
 
     /// Physical or logical location of the asset
     pub location: Option<Text>,
@@ -240,14 +246,14 @@ pub struct AssetInfo {
 /// security events with context about the users involved. It includes
 /// both identity information and risk assessment data for security analysis.
 ///
-/// # Risk Score Scale
+/// # Risk Level
 ///
-/// The risk_score field uses a 1-10 scale representing security risk:
-/// - **1-2**: Very low risk (standard users, limited access)
-/// - **3-4**: Low risk (regular employees, standard permissions)
-/// - **5-6**: Medium risk (power users, some elevated access)
-/// - **7-8**: High risk (administrators, sensitive data access)
-/// - **9-10**: Very high risk (privileged accounts, critical system access)
+/// `risk_score` is a [`RiskLevel`] (the [`Severity`] scale) for account
+/// risk:
+/// - **Low**: standard users, limited access
+/// - **Medium**: power users, some elevated access
+/// - **High**: administrators, sensitive data access
+/// - **Critical**: privileged accounts with critical system access
 ///
 /// # Privileged Account Classification
 ///
@@ -255,7 +261,7 @@ pub struct AssetInfo {
 /// permissions that could be used to compromise systems or access sensitive
 /// data. This includes:
 /// - Administrative accounts (domain admin, local admin)
-/// - Service accounts with elevated permissions  
+/// - Service accounts with elevated permissions
 /// - Developer accounts with production access
 /// - Security team accounts with monitoring privileges
 ///
@@ -274,11 +280,11 @@ pub struct AssetInfo {
 ///     full_name: Some(Text::from("John Smith")),
 ///     department: Some(Text::from("Engineering")),
 ///     role: Some(Text::from("Senior Software Engineer")),
-///     risk_score: 6,  // Medium risk (developer with some access)
+///     risk_score: RiskLevel::Medium, // developer with some access
 ///     is_privileged: false,
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UserProfile {
     /// Full name of the user
     pub full_name: Option<Text>,
@@ -289,8 +295,8 @@ pub struct UserProfile {
     /// Job title or role within the organization
     pub role: Option<Text>,
 
-    /// Security risk score on a 1-10 scale (1=low risk, 10=high risk)
-    pub risk_score: u8,
+    /// Security risk of this account
+    pub risk_score: RiskLevel,
 
     /// Whether this is a privileged account with elevated permissions
     pub is_privileged: bool,
@@ -345,8 +351,8 @@ mod tests {
         let threat = ThreatInfo::default();
 
         assert_eq!(threat.threat_type.to_string(), "unknown");
-        assert_eq!(threat.severity, 1);
-        assert_eq!(threat.confidence, 0);
+        assert_eq!(threat.severity, Severity::Low);
+        assert_eq!(threat.confidence, Confidence::NONE);
         assert!(threat.description.is_none());
         assert_eq!(threat.source.to_string(), "unknown");
         assert!(threat.first_seen.is_none());
@@ -357,24 +363,27 @@ mod tests {
     fn test_threat_info_with_data() {
         let threat = ThreatInfo {
             threat_type: Text::from("malware"),
-            severity: 8,
-            confidence: 85,
+            severity: Severity::High,
+            confidence: Confidence::new(85),
             description: Some(Text::from("Known botnet C&C server")),
             source: Text::from("ThreatIntel Feed v2.1"),
-            first_seen: Some(1640995200),
-            last_seen: Some(1672531200),
+            first_seen: Some(Timestamp::from_secs(1640995200)),
+            last_seen: Some(Timestamp::from_secs(1672531200)),
         };
 
         assert_eq!(threat.threat_type.to_string(), "malware");
-        assert_eq!(threat.severity, 8);
-        assert_eq!(threat.confidence, 85);
+        assert_eq!(threat.severity, Severity::High);
+        assert_eq!(threat.confidence.as_percent(), 85);
+        assert!(threat.is_at_least(Severity::Medium));
+        assert!(threat.is_at_least(Severity::High));
+        assert!(!threat.is_at_least(Severity::Critical));
         assert_eq!(
             threat.description.as_ref().unwrap().to_string(),
             "Known botnet C&C server"
         );
         assert_eq!(threat.source.to_string(), "ThreatIntel Feed v2.1");
-        assert_eq!(threat.first_seen.unwrap(), 1640995200);
-        assert_eq!(threat.last_seen.unwrap(), 1672531200);
+        assert_eq!(threat.first_seen.unwrap().as_secs(), 1640995200);
+        assert!(threat.first_seen < threat.last_seen);
     }
 
     #[test]
@@ -382,7 +391,7 @@ mod tests {
         let asset = AssetInfo {
             asset_type: Text::from("server"),
             owner: Some(Text::from("IT Operations Team")),
-            criticality: 9,
+            criticality: Criticality::Critical,
             location: Some(Text::from("DataCenter-East-Rack42")),
             tags: vec![
                 Text::from("production"),
@@ -396,7 +405,7 @@ mod tests {
             asset.owner.as_ref().unwrap().to_string(),
             "IT Operations Team"
         );
-        assert_eq!(asset.criticality, 9);
+        assert_eq!(asset.criticality, Criticality::Critical);
         assert_eq!(
             asset.location.as_ref().unwrap().to_string(),
             "DataCenter-East-Rack42"
@@ -413,7 +422,7 @@ mod tests {
             full_name: Some(Text::from("John Smith")),
             department: Some(Text::from("Engineering")),
             role: Some(Text::from("Senior Software Engineer")),
-            risk_score: 6,
+            risk_score: RiskLevel::Medium,
             is_privileged: false,
         };
 
@@ -423,7 +432,7 @@ mod tests {
             user.role.as_ref().unwrap().to_string(),
             "Senior Software Engineer"
         );
-        assert_eq!(user.risk_score, 6);
+        assert_eq!(user.risk_score, RiskLevel::Medium);
         assert!(!user.is_privileged);
     }
 
@@ -433,11 +442,11 @@ mod tests {
             full_name: Some(Text::from("Admin User")),
             department: Some(Text::from("IT Security")),
             role: Some(Text::from("System Administrator")),
-            risk_score: 9,
+            risk_score: RiskLevel::Critical,
             is_privileged: true,
         };
 
-        assert_eq!(admin_user.risk_score, 9);
+        assert_eq!(admin_user.risk_score, RiskLevel::Critical);
         assert!(admin_user.is_privileged);
     }
 
@@ -452,7 +461,7 @@ mod tests {
         let asset = AssetInfo {
             asset_type: Text::from("test"),
             owner: None,
-            criticality: 1,
+            criticality: Criticality::Low,
             location: None,
             tags: vec![],
         };
@@ -462,7 +471,7 @@ mod tests {
             full_name: None,
             department: None,
             role: None,
-            risk_score: 1,
+            risk_score: RiskLevel::Low,
             is_privileged: false,
         };
         let _user_clone = user.clone();
