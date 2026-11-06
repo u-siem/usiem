@@ -38,6 +38,8 @@ pub const EVENT_CODE: &str = "event.code";
 pub const EVENT_DATASET: &str = "event.dataset";
 /// Name of the module/product that produced the event.
 pub const EVENT_PROVIDER: &str = "event.provider";
+/// Why the event happened, e.g. the reason a request was refused.
+pub const EVENT_REASON: &str = "event.reason";
 /// Free-form human readable message.
 pub const MESSAGE: &str = "message";
 /// Original log severity text, e.g. `Information`, `ERROR`.
@@ -57,6 +59,13 @@ pub const USER_ID: &str = "user.id";
 pub const USER_TARGET_NAME: &str = "user.target.name";
 pub const USER_TARGET_DOMAIN: &str = "user.target.domain";
 pub const USER_TARGET_ID: &str = "user.target.id";
+/// Not ECS: `true` when the system says the account does not exist (e.g.
+/// sshd's "invalid user").
+pub const USER_INVALID: &str = "user.invalid";
+
+// --- ssh (not ECS) ---
+/// Authentication method of an SSH login: `password`, `publickey`, ...
+pub const SSH_METHOD: &str = "ssh.method";
 
 // --- network ---
 pub const SOURCE_IP: &str = "source.ip";
@@ -70,9 +79,15 @@ pub const DESTINATION_DOMAIN: &str = "destination.domain";
 /// Bytes sent by the destination.
 pub const DESTINATION_BYTES: &str = "destination.bytes";
 pub const CLIENT_IP: &str = "client.ip";
+/// MAC address, upper-case hex pairs joined by `-` as ECS asks (`AA-BB-CC-DD-EE-FF`).
+pub const CLIENT_MAC: &str = "client.mac";
+/// The client's own name, e.g. the hostname it sent with a DHCP request.
+pub const CLIENT_DOMAIN: &str = "client.domain";
 pub const NETWORK_TRANSPORT: &str = "network.transport";
 pub const NETWORK_PROTOCOL: &str = "network.protocol";
 pub const NETWORK_DURATION: &str = "network.duration";
+/// `ingress` or `egress`, relative to the observer's interface.
+pub const NETWORK_DIRECTION: &str = "network.direction";
 pub const OBSERVER_IP: &str = "observer.ip";
 pub const OBSERVER_NAME: &str = "observer.name";
 pub const OBSERVER_INGRESS_INTERFACE: &str = "observer.ingress.interface";
@@ -117,6 +132,8 @@ pub const DNS_ANSWER_CLASS: &str = "dns.answer.class";
 pub const DNS_ANSWER_TTL: &str = "dns.answer.ttl";
 pub const DNS_ANSWER_DATA: &str = "dns.answer.data";
 pub const DNS_RESOLVED_IP: &str = "dns.resolved_ip";
+/// `NXDOMAIN`, `NODATA`, `SERVFAIL`, ...
+pub const DNS_RESPONSE_CODE: &str = "dns.response_code";
 pub const DHCP_TYPE: &str = "dhcp.type";
 
 // --- process ---
@@ -124,7 +141,9 @@ pub const PROCESS_PID: &str = "process.pid";
 pub const PROCESS_NAME: &str = "process.name";
 pub const PROCESS_EXECUTABLE: &str = "process.executable";
 pub const PROCESS_COMMAND_LINE: &str = "process.command_line";
+pub const PROCESS_WORKING_DIRECTORY: &str = "process.working_directory";
 pub const PROCESS_PARENT_PID: &str = "process.parent.pid";
+pub const PROCESS_PARENT_NAME: &str = "process.parent.name";
 pub const PROCESS_PARENT_EXECUTABLE: &str = "process.parent.executable";
 pub const PROCESS_PARENT_COMMAND_LINE: &str = "process.parent.command_line";
 
@@ -157,6 +176,11 @@ pub const REGISTRY_DATA_STRINGS: &str = "registry.data.strings";
 pub const RULE_NAME: &str = "rule.name";
 pub const RULE_ID: &str = "rule.id";
 pub const RULE_CATEGORY: &str = "rule.category";
+pub const RULE_UUID: &str = "rule.uuid";
+
+// --- group ---
+pub const GROUP_NAME: &str = "group.name";
+pub const GROUP_ID: &str = "group.id";
 
 // --- threat intel (written when an event matches an indicator feed) ---
 /// The listed IP the event matched.
@@ -169,6 +193,8 @@ pub const THREAT_INDICATOR_TYPE: &str = "threat.indicator.type";
 pub const THREAT_INDICATOR_MATCHED_FIELD: &str = "threat.indicator.matched.field";
 /// The feed(s) listing the indicator.
 pub const THREAT_FEED_NAME: &str = "threat.feed.name";
+/// MITRE ATT&CK technique ids, e.g. `T1110.001`.
+pub const THREAT_TECHNIQUE_ID: &str = "threat.technique.id";
 
 // --- alerts ---
 pub const ALERT_ID: &str = "alert.id";

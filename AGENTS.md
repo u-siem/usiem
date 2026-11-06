@@ -126,7 +126,10 @@ src/
 │   │                        # detected per message) — callers own the sockets
 │   └── parser/              # LogParser, ParserRegistry, common (Apache/JSON/Windows/CEF) +
 │                            # transport/syslog parsers; registries also expose manifests() ->
-│                            # Vec<capability::ComponentManifest> (no Component impl — see below)
+│                            # Vec<capability::ComponentManifest> (no Component impl — see below).
+│                            # Parsers for particular sources live outside this crate; common and
+│                            # transport parsers are earlier exceptions, not a place for new ones
+
 └── processing/
     ├── metadata.rs          # unimplemented stub — do NOT confuse with src/event/metadata.rs (real code)
     ├── context.rs           # InvocationContext (who's calling + tenant/request_id/reason/cancellation),
