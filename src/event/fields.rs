@@ -71,11 +71,15 @@ pub const SSH_METHOD: &str = "ssh.method";
 pub const SOURCE_IP: &str = "source.ip";
 pub const SOURCE_PORT: &str = "source.port";
 pub const SOURCE_DOMAIN: &str = "source.domain";
+/// Same form as [`CLIENT_MAC`].
+pub const SOURCE_MAC: &str = "source.mac";
 /// Bytes sent by the source.
 pub const SOURCE_BYTES: &str = "source.bytes";
 pub const DESTINATION_IP: &str = "destination.ip";
 pub const DESTINATION_PORT: &str = "destination.port";
 pub const DESTINATION_DOMAIN: &str = "destination.domain";
+/// Same form as [`CLIENT_MAC`].
+pub const DESTINATION_MAC: &str = "destination.mac";
 /// Bytes sent by the destination.
 pub const DESTINATION_BYTES: &str = "destination.bytes";
 pub const CLIENT_IP: &str = "client.ip";
