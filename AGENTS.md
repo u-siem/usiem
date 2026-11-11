@@ -137,8 +137,12 @@ src/
     ├── pipeline.rs          # Pipeline/Processor: ordered, instrumented processing stages; Pipeline also
     │                        # exposes manifests() -> Vec<capability::ComponentManifest>
     ├── rating.rs            # shared rating scales: Severity (+ Criticality/RiskLevel aliases,
-    │                        # from_score for 1-10 feeds) and Confidence (0..=100); signal.rs
-    │                        # re-exports both for the old processing::signal paths
+    │                        # from_score for 1-10 feeds), Confidence (0..=100) and RiskScore
+    │                        # (saturating risk points); signal.rs re-exports Severity/Confidence
+    │                        # for the old processing::signal paths
+    ├── entity.rs            # EntityKind/EntityRef: the host/user/ip/device a finding is about,
+    │                        # normalised; EntityKind::for_field maps ECS field names to kinds.
+    │                        # Naming only — risk totals and grouping are application logic
     ├── signal.rs            # Signal: an event/cluster evaluated against context or threat intel
     │                        # and flagged suspicious — not yet an alarm (Signal::into_event)
     ├── incident.rs          # Incident: analyst-facing aggregate of events/signals judged

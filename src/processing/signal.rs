@@ -20,7 +20,9 @@
 use crate::event::core::RawData;
 use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::event::{CoreEvent, EventId, Origin};
+use crate::processing::entity::EntityRef;
 use crate::processing::message::LocalizedMessage;
+use crate::processing::rating::RiskScore;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -117,6 +119,10 @@ pub struct Signal {
     pub message: LocalizedMessage,
     /// When the underlying condition was detected.
     pub observed_at: Timestamp,
+    /// The hosts, users, addresses or devices this signal is about.
+    pub entities: Vec<EntityRef>,
+    /// How much this signal adds to each of [`Signal::entities`]' risk.
+    pub risk: Option<RiskScore>,
 }
 
 impl Signal {
@@ -139,7 +145,21 @@ impl Signal {
             context: HashMap::new(),
             message,
             observed_at,
+            entities: Vec::new(),
+            risk: None,
         }
+    }
+
+    /// Attach the entities this signal is about; chainable.
+    pub fn with_entities(mut self, entities: impl IntoIterator<Item = EntityRef>) -> Self {
+        self.entities.extend(entities);
+        self
+    }
+
+    /// Set the risk this signal adds to each of its entities; chainable.
+    pub fn with_risk(mut self, risk: RiskScore) -> Self {
+        self.risk = Some(risk);
+        self
     }
 
     /// Attach MITRE ATT&CK technique ids; chainable.
@@ -244,6 +264,15 @@ impl Signal {
             Text::from("observed_at"),
             FieldValue::Time(self.observed_at),
         );
+        if !self.entities.is_empty() {
+            object.insert(Text::from("entities"), entities_field(&self.entities));
+        }
+        if let Some(risk) = self.risk {
+            object.insert(
+                Text::from("risk"),
+                FieldValue::uint(u64::from(risk.points())),
+            );
+        }
         FieldValue::Object(object)
     }
 
@@ -272,6 +301,22 @@ impl Signal {
         }
         event
     }
+}
+
+/// Entities as an array of `{type, id}` objects (`signal.entities`,
+/// `incident.entities`).
+pub(crate) fn entities_field(entities: &[EntityRef]) -> FieldValue {
+    FieldValue::Array(
+        entities
+            .iter()
+            .map(|e| {
+                let mut object = HashMap::new();
+                object.insert(Text::from("type"), FieldValue::str(e.kind.as_str()));
+                object.insert(Text::from("id"), FieldValue::string(e.id.clone()));
+                FieldValue::Object(object)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]

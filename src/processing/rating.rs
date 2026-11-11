@@ -187,12 +187,92 @@ impl FromStr for Confidence {
     }
 }
 
+/// Risk points: how much a finding adds to the risk of the entities it
+/// concerns. Applications add up the points each entity collects over a
+/// window and act past a threshold (risk-based alerting); the scale is
+/// theirs (a common one is 1-100 per finding). Addition saturates.
+///
+/// ```
+/// use usiem::processing::rating::RiskScore;
+///
+/// let total = RiskScore::new(30) + RiskScore::new(50);
+/// assert_eq!(total.points(), 80);
+/// assert_eq!(RiskScore::new(40).scaled(150).points(), 60);
+/// assert_eq!((RiskScore::new(u32::MAX) + RiskScore::new(1)).points(), u32::MAX);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct RiskScore(u32);
+
+impl RiskScore {
+    /// No risk.
+    pub const ZERO: RiskScore = RiskScore(0);
+
+    /// `points` of risk.
+    pub fn new(points: u32) -> Self {
+        Self(points)
+    }
+
+    /// The score in points.
+    pub fn points(&self) -> u32 {
+        self.0
+    }
+
+    /// The score times `percent` / 100 (an entity's criticality, say),
+    /// rounded down and saturating.
+    pub fn scaled(self, percent: u32) -> Self {
+        Self(((u64::from(self.0) * u64::from(percent)) / 100).min(u64::from(u32::MAX)) as u32)
+    }
+}
+
+impl std::ops::Add for RiskScore {
+    type Output = RiskScore;
+
+    fn add(self, other: RiskScore) -> RiskScore {
+        RiskScore(self.0.saturating_add(other.0))
+    }
+}
+
+impl std::ops::AddAssign for RiskScore {
+    fn add_assign(&mut self, other: RiskScore) {
+        *self = *self + other;
+    }
+}
+
+impl std::iter::Sum for RiskScore {
+    fn sum<I: Iterator<Item = RiskScore>>(iter: I) -> RiskScore {
+        iter.fold(RiskScore::ZERO, |a, b| a + b)
+    }
+}
+
+impl From<RiskScore> for u32 {
+    fn from(score: RiskScore) -> Self {
+        score.0
+    }
+}
+
+impl fmt::Display for RiskScore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for RiskScore {
+    type Err = RatingParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .parse::<u32>()
+            .map(RiskScore)
+            .map_err(|_| RatingParseError(s.to_string()))
+    }
+}
+
 /// `Severity` serializes as its lowercase name, `Confidence` as a bare
 /// integer — the same shapes [`crate::processing::signal::Signal`] writes
 /// into its event fields.
 #[cfg(feature = "serde")]
 mod serde_impl {
-    use super::{Confidence, Severity};
+    use super::{Confidence, RiskScore, Severity};
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
     impl Serialize for Severity {
@@ -217,6 +297,17 @@ mod serde_impl {
     impl<'de> Deserialize<'de> for Confidence {
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             u8::deserialize(deserializer).map(Confidence::new)
+        }
+    }
+    impl Serialize for RiskScore {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_u32(self.0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for RiskScore {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            u32::deserialize(deserializer).map(RiskScore)
         }
     }
 }

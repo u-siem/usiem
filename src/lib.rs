@@ -140,7 +140,8 @@ pub mod prelude {
     pub use crate::processing::signal::{EventRef, Signal, SignalId};
 
     // Shared rating scales
-    pub use crate::processing::rating::{Confidence, Criticality, RiskLevel, Severity};
+    pub use crate::processing::entity::{EntityKind, EntityRef};
+    pub use crate::processing::rating::{Confidence, Criticality, RiskLevel, RiskScore, Severity};
 
     // Localized messages and message-catalog rendering
     pub use crate::processing::message::{

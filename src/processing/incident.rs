@@ -21,6 +21,7 @@
 use crate::event::core::RawData;
 use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::event::{CoreEvent, Origin};
+use crate::processing::entity::EntityRef;
 use crate::processing::message::LocalizedMessage;
 use crate::processing::signal::{Confidence, EventRef, Severity, Signal};
 use std::collections::HashMap;
@@ -168,6 +169,8 @@ pub struct Incident {
     pub context: HashMap<String, FieldValue>,
     pub message: LocalizedMessage,
     pub evidence: Vec<Evidence>,
+    /// The hosts, users, addresses or devices this incident is about.
+    pub entities: Vec<EntityRef>,
     /// When the earliest evidence occurred / this incident was opened.
     pub first_seen: Timestamp,
     /// When the most recent evidence occurred; extended by [`Incident::add_evidence`].
@@ -193,9 +196,21 @@ impl Incident {
             context: HashMap::new(),
             message,
             evidence: Vec::new(),
+            entities: Vec::new(),
             first_seen: opened_at,
             last_seen: opened_at,
         }
+    }
+
+    /// Attach the entities this incident is about; chainable. Repeats are
+    /// kept once.
+    pub fn with_entities(mut self, entities: impl IntoIterator<Item = EntityRef>) -> Self {
+        for e in entities {
+            if !self.entities.contains(&e) {
+                self.entities.push(e);
+            }
+        }
+        self
     }
 
     /// Attach MITRE ATT&CK technique ids; chainable.
@@ -286,6 +301,12 @@ impl Incident {
         event.add_field("incident.context".to_string(), context_field);
         event.add_field("incident.message".to_string(), message_field);
         event.add_field("incident.evidence".to_string(), evidence_field);
+        if !self.entities.is_empty() {
+            event.add_field(
+                "incident.entities".to_string(),
+                crate::processing::signal::entities_field(&self.entities),
+            );
+        }
         event.add_field(
             "incident.last_seen".to_string(),
             FieldValue::Time(last_seen),

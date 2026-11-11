@@ -199,9 +199,26 @@ pub const THREAT_INDICATOR_MATCHED_FIELD: &str = "threat.indicator.matched.field
 pub const THREAT_FEED_NAME: &str = "threat.feed.name";
 /// MITRE ATT&CK technique ids, e.g. `T1110.001`.
 pub const THREAT_TECHNIQUE_ID: &str = "threat.technique.id";
+/// MITRE ATT&CK technique names, in the order of [`THREAT_TECHNIQUE_ID`].
+pub const THREAT_TECHNIQUE_NAME: &str = "threat.technique.name";
+/// MITRE ATT&CK tactic ids, e.g. `TA0006`.
+pub const THREAT_TACTIC_ID: &str = "threat.tactic.id";
+/// MITRE ATT&CK tactic names, e.g. `Credential Access`.
+pub const THREAT_TACTIC_NAME: &str = "threat.tactic.name";
+
+// --- risk (risk-based alerting) ---
+/// Risk points one finding adds to an entity.
+pub const RISK_SCORE: &str = "risk.score";
+/// The entity's kind: `host`, `user`, `ip`, `device`, ... (see
+/// `processing::entity::EntityKind`).
+pub const RISK_ENTITY_TYPE: &str = "risk.entity.type";
+/// The entity's normalised id.
+pub const RISK_ENTITY_ID: &str = "risk.entity.id";
 
 // --- alerts ---
 pub const ALERT_ID: &str = "alert.id";
+/// A risk alert's total: the points its entity collected in the window.
+pub const ALERT_RISK_SCORE: &str = "alert.risk_score";
 /// What raised it, e.g. `intel:feodo`.
 pub const ALERT_RULE: &str = "alert.rule";
 pub const ALERT_SEVERITY: &str = "alert.severity";

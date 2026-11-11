@@ -124,6 +124,22 @@ impl EventId {
     pub fn as_u64(&self) -> u64 {
         self.0
     }
+
+    /// An id read back from storage (e.g. a stored `event.id` field), as
+    /// [`EventId::as_u64`] gave it. It names the event it was computed
+    /// from; nothing checks that such an event exists.
+    pub fn from_u64(raw: u64) -> Self {
+        EventId(raw)
+    }
+}
+
+impl std::str::FromStr for EventId {
+    type Err = std::num::ParseIntError;
+
+    /// Parses the 16-digit hex form [`std::fmt::Display`] writes.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        u64::from_str_radix(s.trim(), 16).map(EventId)
+    }
 }
 
 impl std::fmt::Display for EventId {

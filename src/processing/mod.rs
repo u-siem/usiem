@@ -12,6 +12,9 @@
 //! - [`rating`] provides the shared rating scales: [`rating::Severity`]
 //!   (with its [`rating::Criticality`]/[`rating::RiskLevel`] aliases) and
 //!   [`rating::Confidence`], used by signals, incidents and enrichment types.
+//! - [`entity`] provides [`entity::EntityRef`]: the host, user, address or
+//!   device a finding concerns, normalised so the same one compares equal
+//!   across logs.
 //! - [`incident`] provides [`incident::Incident`]: an analyst-facing
 //!   aggregate of events/signals that an application-defined rule judged
 //!   significant enough to surface. Independent of [`signal::Signal`] — this
@@ -60,6 +63,7 @@
 pub mod action;
 pub mod context;
 pub mod enrichment;
+pub mod entity;
 pub mod incident;
 pub mod lookup;
 pub mod message;
