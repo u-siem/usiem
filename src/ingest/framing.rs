@@ -1,4 +1,5 @@
-//! Stream framing for syslog over TCP and TLS (RFC 6587).
+//! Stream framing for syslog over TCP and TLS (RFC 6587), and for log
+//! files ([`LineFramer`]).
 //!
 //! [`SyslogFramer`] is sans-IO: the caller reads bytes from whatever
 //! socket or file it owns, [`push`](SyslogFramer::push)es them in, and pulls
@@ -246,6 +247,215 @@ fn trim_line(line: &[u8]) -> &[u8] {
     line.strip_suffix(b"\r").unwrap_or(line)
 }
 
+/// One record of a log file, with where it lies in the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineRecord {
+    /// The record without its line ending. Lines of a multiline record are
+    /// joined by `\n`.
+    pub data: Vec<u8>,
+    /// File offset of its first byte.
+    pub start: u64,
+    /// File offset just past its last line ending: resume reading here once
+    /// this record is safely stored.
+    pub end: u64,
+    /// Bytes past the size limit were dropped.
+    pub truncated: bool,
+}
+
+/// Splits a log file into records: one per line, or several lines per
+/// record with [`with_multiline`](LineFramer::with_multiline).
+///
+/// Sans-IO like [`SyslogFramer`]: the caller reads the file from offset
+/// `offset`, [`push`](LineFramer::push)es the bytes in and takes records out
+/// with [`next_record`](LineFramer::next_record). Each record carries its
+/// offsets, so a reader can checkpoint at a record boundary and resume
+/// there. A last line without a line ending is held back (the writer may
+/// still be writing it) until [`finish`](LineFramer::finish).
+///
+/// ```
+/// use usiem::ingest::framing::LineFramer;
+///
+/// let mut framer = LineFramer::new(100, 1024);
+/// framer.push(b"first\r\n\nsecond\nthi");
+/// let r = framer.next_record().unwrap();
+/// assert_eq!((r.data.as_slice(), r.start, r.end), (&b"first"[..], 100, 107));
+/// assert_eq!(framer.next_record().unwrap().data, b"second");
+/// assert_eq!(framer.next_record(), None); // "thi" may still grow
+/// assert_eq!(framer.finish().unwrap().data, b"thi");
+/// ```
+#[derive(Debug, Clone)]
+pub struct LineFramer {
+    buf: Vec<u8>,
+    /// File offset of `buf[0]`.
+    base: u64,
+    max_record: usize,
+    /// Dropping the rest of an over-long line: what was kept of it, and
+    /// where it started.
+    long: Option<(Vec<u8>, u64)>,
+    multiline: Option<regex::bytes::Regex>,
+    /// The multiline record being built.
+    pending: Option<LineRecord>,
+}
+
+impl LineFramer {
+    /// A framer reading from file offset `offset`, delivering records of at
+    /// most `max_record` bytes (longer ones are truncated).
+    pub fn new(offset: u64, max_record: usize) -> LineFramer {
+        LineFramer {
+            buf: Vec::new(),
+            base: offset,
+            max_record: max_record.max(1),
+            long: None,
+            multiline: None,
+            pending: None,
+        }
+    }
+
+    /// Lines matching `start` begin a record; any other line continues the
+    /// record before it (a stack trace, an indented continuation). A record
+    /// is complete once the next one starts, or on
+    /// [`flush`](LineFramer::flush).
+    pub fn with_multiline(mut self, start: regex::bytes::Regex) -> LineFramer {
+        self.multiline = Some(start);
+        self
+    }
+
+    /// Appends bytes read from the file.
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
+    /// The file offset just past the bytes pushed so far.
+    pub fn position(&self) -> u64 {
+        self.base + self.buf.len() as u64
+    }
+
+    /// The next complete record, `None` when more bytes are needed.
+    pub fn next_record(&mut self) -> Option<LineRecord> {
+        loop {
+            let (line, start, end, truncated) = self.next_line()?;
+            if let Some(record) = self.take_line(line, start, end, truncated) {
+                return Some(record);
+            }
+        }
+    }
+
+    /// Completes a multiline record still waiting for its next line (call
+    /// it once the file has been quiet for a while).
+    pub fn flush(&mut self) -> Option<LineRecord> {
+        self.pending.take()
+    }
+
+    /// The end of the file was reached for good (a rotated file): the
+    /// pending record, then a last line without a line ending. Call until
+    /// `None`.
+    pub fn finish(&mut self) -> Option<LineRecord> {
+        if let Some(record) = self.next_record() {
+            return Some(record);
+        }
+        if !self.buf.is_empty() || self.long.is_some() {
+            let end = self.position();
+            let (mut line, start, mut truncated) = match self.long.take() {
+                Some((kept, start)) => (kept, start, true),
+                None => (Vec::new(), self.base, false),
+            };
+            let room = self.max_record.saturating_sub(line.len());
+            truncated |= self.buf.len() > room;
+            line.extend_from_slice(&self.buf[..self.buf.len().min(room)]);
+            self.buf.clear();
+            self.base = end;
+            let line = trim_cr(line);
+            if let Some(record) = self.take_line(line, start, end, truncated) {
+                return Some(record);
+            }
+        }
+        self.pending.take()
+    }
+
+    /// The next whole line: (bytes without the ending, start, end, truncated).
+    fn next_line(&mut self) -> Option<(Vec<u8>, u64, u64, bool)> {
+        let Some(lf) = self.buf.iter().position(|&b| b == b'\n') else {
+            // No line ending yet: keep at most `max_record` bytes of it.
+            if self.buf.len() > self.max_record {
+                let start = self.base;
+                let kept = self.long.get_or_insert_with(|| (Vec::new(), start));
+                let room = self.max_record.saturating_sub(kept.0.len());
+                kept.0
+                    .extend_from_slice(&self.buf[..room.min(self.buf.len())]);
+                self.base += self.buf.len() as u64;
+                self.buf.clear();
+            }
+            return None;
+        };
+        let end = self.base + lf as u64 + 1;
+        let (line, start, truncated) = match self.long.take() {
+            Some((mut kept, start)) => {
+                let room = self.max_record.saturating_sub(kept.len());
+                kept.extend_from_slice(&self.buf[..lf.min(room)]);
+                (kept, start, true)
+            }
+            None if lf > self.max_record => (self.buf[..self.max_record].to_vec(), self.base, true),
+            None => (self.buf[..lf].to_vec(), self.base, false),
+        };
+        self.buf.drain(..=lf);
+        self.base = end;
+        Some((trim_cr(line), start, end, truncated))
+    }
+
+    /// Folds one line into the record being built; a finished record.
+    fn take_line(
+        &mut self,
+        line: Vec<u8>,
+        start: u64,
+        end: u64,
+        truncated: bool,
+    ) -> Option<LineRecord> {
+        let Some(multiline) = &self.multiline else {
+            if line.is_empty() {
+                return None;
+            }
+            return Some(LineRecord {
+                data: line,
+                start,
+                end,
+                truncated,
+            });
+        };
+        let begins = !line.is_empty() && multiline.is_match(&line);
+        if !begins && let Some(pending) = &mut self.pending {
+            let room = self.max_record.saturating_sub(pending.data.len() + 1);
+            if room < line.len() {
+                pending.truncated = true;
+            }
+            if room > 0 {
+                pending.data.push(b'\n');
+                pending
+                    .data
+                    .extend_from_slice(&line[..line.len().min(room)]);
+            }
+            pending.truncated |= truncated;
+            pending.end = end;
+            return None;
+        }
+        if line.is_empty() {
+            return None;
+        }
+        self.pending.replace(LineRecord {
+            data: line,
+            start,
+            end,
+            truncated,
+        })
+    }
+}
+
+fn trim_cr(mut line: Vec<u8>) -> Vec<u8> {
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    line
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +558,86 @@ mod tests {
             assert_eq!(f.next_frame(), Some(ok("<13>x")));
         }
         assert!(f.buf.len() < 64);
+    }
+
+    fn records(framer: &mut LineFramer) -> Vec<(String, u64, u64)> {
+        std::iter::from_fn(|| framer.next_record())
+            .map(|r| (String::from_utf8(r.data).unwrap(), r.start, r.end))
+            .collect()
+    }
+
+    #[test]
+    fn lines_carry_their_offsets_across_pushes() {
+        let mut f = LineFramer::new(0, 1024);
+        f.push(b"ab");
+        assert_eq!(f.next_record(), None);
+        f.push(b"c\r\nde\n\n");
+        assert_eq!(
+            records(&mut f),
+            vec![("abc".into(), 0, 5), ("de".into(), 5, 8)]
+        );
+        f.push(b"x\n");
+        assert_eq!(records(&mut f), vec![("x".into(), 9, 11)]);
+        assert_eq!(f.position(), 11);
+    }
+
+    #[test]
+    fn long_lines_are_truncated_but_offsets_stay_true() {
+        let mut f = LineFramer::new(0, 4);
+        f.push(b"0123456");
+        assert_eq!(f.next_record(), None);
+        f.push(b"789\nok\n");
+        let r = f.next_record().unwrap();
+        assert_eq!(
+            (r.data.as_slice(), r.start, r.end, r.truncated),
+            (&b"0123"[..], 0, 11, true)
+        );
+        let r = f.next_record().unwrap();
+        assert_eq!(
+            (r.data.as_slice(), r.start, r.end, r.truncated),
+            (&b"ok"[..], 11, 14, false)
+        );
+
+        let mut f = LineFramer::new(0, 4);
+        f.push(b"abcdefgh\n");
+        let r = f.next_record().unwrap();
+        assert_eq!(
+            (r.data.as_slice(), r.end, r.truncated),
+            (&b"abcd"[..], 9, true)
+        );
+    }
+
+    #[test]
+    fn multiline_records_end_when_the_next_one_starts() {
+        let start = regex::bytes::Regex::new(r"^\d{4}-").unwrap();
+        let mut f = LineFramer::new(10, 1024).with_multiline(start);
+        f.push(b"  orphan\n2026-01-01 boom\n\tat a\n\n\tat b\n2026-01-01 next\n");
+        assert_eq!(
+            records(&mut f),
+            vec![
+                ("  orphan".into(), 10, 19),
+                ("2026-01-01 boom\n\tat a\n\n\tat b".into(), 19, 48),
+            ]
+        );
+        // The last record waits for its successor, or a flush.
+        let r = f.flush().unwrap();
+        assert_eq!(
+            (r.data.as_slice(), r.start, r.end),
+            (&b"2026-01-01 next"[..], 48, 64)
+        );
+        assert_eq!(f.flush(), None);
+    }
+
+    #[test]
+    fn finish_delivers_the_unterminated_tail() {
+        let start = regex::bytes::Regex::new(r"^\S").unwrap();
+        let mut f = LineFramer::new(0, 1024).with_multiline(start);
+        f.push(b"a\n b\nc");
+        assert_eq!(records(&mut f), vec![]);
+        let r = f.finish().unwrap();
+        assert_eq!((r.data.as_slice(), r.end), (&b"a\n b"[..], 5));
+        let r = f.finish().unwrap();
+        assert_eq!((r.data.as_slice(), r.start, r.end), (&b"c"[..], 5, 6));
+        assert_eq!(f.finish(), None);
     }
 }
