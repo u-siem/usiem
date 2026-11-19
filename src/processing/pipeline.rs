@@ -4,14 +4,18 @@
 //!
 //! Like [`crate::ingest::parser::LogParser`], a [`Processor`] wraps a shared
 //! closure (a plain `fn` item works too), so a stage can carry its own
-//! configuration or a handle to a dataset. A [`Pipeline`]
-//! runs a named, ordered sequence of [`Processor`]s over an [`Event`],
-//! recording per-stage timing and status in a [`PipelineMetadata`].
+//! configuration or a handle to a dataset. A [`Pipeline`] runs a named,
+//! ordered sequence of [`Processor`]s over an [`Event`], counting per stage
+//! how many events it saw, dropped and failed, and how long it took
+//! ([`StageStats`]).
+//!
+//! [`Pipeline::run`] takes `&self`: one pipeline can be shared by every
+//! worker thread. The counters are atomics.
 //!
 //! This is intentionally unopinionated about what a stage *does* — enrichment,
 //! filtering, correlation, and field derivation can all be expressed as a
 //! `ProcessorFn`. This module only provides the ordering/instrumentation seam
-//! that was previously missing between parsing and any downstream processing.
+//! between parsing and any downstream processing.
 //!
 //! # Example
 //!
@@ -20,17 +24,16 @@
 //! use usiem::event::{CoreEvent as Event, Origin, RawData};
 //! use usiem::event::field::{FieldValue, Timestamp};
 //!
-//! fn tag_high_severity(mut event: Event) -> ProcessResult {
-//!     let is_high = matches!(event.get_field("severity"), Some(FieldValue::Int(n)) if *n >= 8);
-//!     event.add_field("severity.is_high", FieldValue::Bool(is_high));
-//!     ProcessResult::Continue(event)
-//! }
-//!
+//! let threshold = 8; // configuration captured by the stage
 //! let mut pipeline = Pipeline::new();
 //! pipeline.add_stage(Processor::new(
 //!     "tag_high_severity",
-//!     "Flags events with severity >= 8",
-//!     tag_high_severity,
+//!     "Flags events with severity >= threshold",
+//!     move |mut event: Event| {
+//!         let is_high = matches!(event.get_field("severity"), Some(FieldValue::Int(n)) if *n >= threshold);
+//!         event.add_field("severity.is_high", FieldValue::Bool(is_high));
+//!         ProcessResult::Continue(event)
+//!     },
 //! ));
 //!
 //! let mut event = Event::new(
@@ -47,10 +50,12 @@
 //!     }
 //!     other => panic!("expected the event to continue, got {other:?}"),
 //! }
+//! assert_eq!(pipeline.stats()[0].1.runs(), 1);
 //! ```
 
 use crate::event::CoreEvent as Event;
-use crate::event::metadata::PipelineMetadata;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 /// A pipeline stage's function: takes ownership of an `Event`.
 pub type ProcessorFn = std::sync::Arc<dyn Fn(Event) -> ProcessResult + Send + Sync>;
@@ -61,9 +66,9 @@ pub type ProcessorFn = std::sync::Arc<dyn Fn(Event) -> ProcessResult + Send + Sy
 /// shared closure.
 #[derive(Clone)]
 pub struct Processor {
-    /// Unique, stable name for this stage — used as the key into
-    /// [`PipelineMetadata`], so it should be a `'static` identifier rather
-    /// than anything derived from event content.
+    /// Unique, stable name for this stage — it labels the stage's
+    /// [`StageStats`], so it should be a `'static` identifier rather than
+    /// anything derived from event content.
     pub name: &'static str,
 
     /// Human-readable description of what this stage does.
@@ -88,6 +93,14 @@ impl Processor {
     }
 }
 
+impl std::fmt::Debug for Processor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Processor")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The outcome of running a single [`Processor`] over an event.
 #[derive(Debug)]
 pub enum ProcessResult {
@@ -100,53 +113,93 @@ pub enum ProcessResult {
     Error(String),
 }
 
+/// Cumulative counters for one stage, across every event and thread.
+#[derive(Debug, Default)]
+pub struct StageStats {
+    runs: AtomicU64,
+    drops: AtomicU64,
+    errors: AtomicU64,
+    nanos: AtomicU64,
+}
+
+impl StageStats {
+    /// Events this stage was run on.
+    pub fn runs(&self) -> u64 {
+        self.runs.load(Ordering::Relaxed)
+    }
+
+    /// Events this stage dropped.
+    pub fn drops(&self) -> u64 {
+        self.drops.load(Ordering::Relaxed)
+    }
+
+    /// Events this stage failed on.
+    pub fn errors(&self) -> u64 {
+        self.errors.load(Ordering::Relaxed)
+    }
+
+    /// Total time spent in this stage; zero when timing is off
+    /// ([`Pipeline::without_timing`]).
+    pub fn total_time(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.nanos.load(Ordering::Relaxed))
+    }
+}
+
 /// An ordered sequence of [`Processor`] stages, run over one [`Event`] at a time.
 ///
 /// A `Pipeline` is intentionally simple: it does not itself provide branching,
 /// retries, or parallelism. Those concerns belong to whatever code constructs
 /// the pipeline and decides which stages to register.
 pub struct Pipeline {
-    stages: Vec<Processor>,
-    metadata: PipelineMetadata,
+    stages: Vec<(Processor, StageStats)>,
+    timing: bool,
 }
 
 impl Pipeline {
-    /// Create a new, empty pipeline with metadata collection enabled.
+    /// Create a new, empty pipeline that times its stages.
     pub fn new() -> Self {
         Self {
             stages: Vec::new(),
-            metadata: PipelineMetadata::new(),
+            timing: true,
         }
     }
 
-    /// Create a new, empty pipeline using the given metadata tracker (for
-    /// example, [`PipelineMetadata::disabled`] to skip collection overhead).
-    pub fn with_metadata(metadata: PipelineMetadata) -> Self {
+    /// Create a new, empty pipeline that counts but doesn't time its stages
+    /// (saves two clock reads per stage and event).
+    pub fn without_timing() -> Self {
         Self {
             stages: Vec::new(),
-            metadata,
+            timing: false,
         }
     }
 
     /// Append a stage to the end of the pipeline.
     pub fn add_stage(&mut self, processor: Processor) -> &mut Self {
-        self.stages.push(processor);
+        self.stages.push((processor, StageStats::default()));
         self
     }
 
     /// The registered stages, in run order.
-    pub fn stages(&self) -> &[Processor] {
-        &self.stages
+    pub fn stages(&self) -> impl ExactSizeIterator<Item = &Processor> {
+        self.stages.iter().map(|(p, _)| p)
+    }
+
+    /// Whether the pipeline has no stages.
+    pub fn is_empty(&self) -> bool {
+        self.stages.is_empty()
+    }
+
+    /// Every stage's name and counters, in run order.
+    pub fn stats(&self) -> Vec<(&'static str, &StageStats)> {
+        self.stages.iter().map(|(p, s)| (p.name, s)).collect()
     }
 
     /// A [`crate::capability::ComponentManifest`] for every registered
-    /// stage, derived from the `name`/`description` it already carries —
-    /// stages stay plain `fn` pointers (no [`crate::capability::Component`]
-    /// impl), so this is how a `Pipeline` participates in the capability
-    /// catalog. See `crate::capability` module docs.
+    /// stage, derived from the `name`/`description` it already carries — this
+    /// is how a `Pipeline` participates in the capability catalog. See
+    /// `crate::capability` module docs.
     pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
-        self.stages
-            .iter()
+        self.stages()
             .map(|stage| {
                 crate::capability::ComponentManifest::new(
                     format!("processor/{}", stage.name),
@@ -158,23 +211,21 @@ impl Pipeline {
             .collect()
     }
 
-    /// Per-stage timing, status, and custom metrics collected across calls to [`Pipeline::run`].
-    pub fn metadata(&self) -> &PipelineMetadata {
-        &self.metadata
-    }
-
     /// Run every stage in order over `event`, stopping early on [`ProcessResult::Drop`]
     /// or [`ProcessResult::Error`].
-    pub fn run(&mut self, mut event: Event) -> ProcessResult {
-        for stage in &self.stages {
-            self.metadata.start_stage(stage.name);
-            match (stage.process_fn)(event) {
-                ProcessResult::Continue(next_event) => {
-                    self.metadata.complete_stage(stage.name);
-                    event = next_event;
-                }
+    pub fn run(&self, mut event: Event) -> ProcessResult {
+        for (stage, stats) in &self.stages {
+            stats.runs.fetch_add(1, Ordering::Relaxed);
+            let started = self.timing.then(Instant::now);
+            let result = (stage.process_fn)(event);
+            if let Some(started) = started {
+                let nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                stats.nanos.fetch_add(nanos, Ordering::Relaxed);
+            }
+            match result {
+                ProcessResult::Continue(next_event) => event = next_event,
                 ProcessResult::Drop(reason) => {
-                    self.metadata.skip_stage(stage.name);
+                    stats.drops.fetch_add(1, Ordering::Relaxed);
                     crate::log_debug!(
                         "pipeline",
                         "stage '{}' dropped the event: {}",
@@ -184,7 +235,7 @@ impl Pipeline {
                     return ProcessResult::Drop(reason);
                 }
                 ProcessResult::Error(reason) => {
-                    self.metadata.fail_stage(stage.name, reason.clone());
+                    stats.errors.fetch_add(1, Ordering::Relaxed);
                     crate::log_warn!("pipeline", "stage '{}' failed: {}", stage.name, reason);
                     return ProcessResult::Error(reason);
                 }
@@ -206,7 +257,6 @@ mod tests {
     use crate::event::Origin;
     use crate::event::RawData;
     use crate::event::field::{FieldValue, Timestamp};
-    use crate::event::metadata::StageStatus;
 
     fn sample_event() -> Event {
         Event::new(
@@ -230,9 +280,18 @@ mod tests {
         ProcessResult::Error("boom".to_string())
     }
 
+    fn stats_of<'a>(pipeline: &'a Pipeline, name: &str) -> &'a StageStats {
+        pipeline
+            .stats()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, s)| s)
+            .unwrap()
+    }
+
     #[test]
     fn test_empty_pipeline_returns_event_unchanged() {
-        let mut pipeline = Pipeline::new();
+        let pipeline = Pipeline::new();
         match pipeline.run(sample_event()) {
             ProcessResult::Continue(event) => assert!(event.get_field("marker").is_none()),
             _ => panic!("expected Continue"),
@@ -240,20 +299,21 @@ mod tests {
     }
 
     #[test]
-    fn test_stages_run_in_order_and_record_metadata() {
+    fn test_stages_run_in_order_and_count() {
         let mut pipeline = Pipeline::new();
         pipeline.add_stage(Processor::new("marker", "adds a marker field", add_marker));
 
-        match pipeline.run(sample_event()) {
-            ProcessResult::Continue(event) => {
-                assert_eq!(event.get_field("marker"), Some(&FieldValue::str("seen")));
+        for _ in 0..3 {
+            match pipeline.run(sample_event()) {
+                ProcessResult::Continue(event) => {
+                    assert_eq!(event.get_field("marker"), Some(&FieldValue::str("seen")));
+                }
+                _ => panic!("expected Continue"),
             }
-            _ => panic!("expected Continue"),
         }
-
-        let stage = pipeline.metadata().get_stage("marker").unwrap();
-        assert_eq!(stage.status, StageStatus::Completed);
-        assert!(stage.exit_time.is_some());
+        let stats = stats_of(&pipeline, "marker");
+        assert_eq!(stats.runs(), 3);
+        assert_eq!(stats.drops() + stats.errors(), 0);
     }
 
     #[test]
@@ -281,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_drop_stops_pipeline_and_records_skipped() {
+    fn test_drop_stops_pipeline() {
         let mut pipeline = Pipeline::new();
         pipeline.add_stage(Processor::new("gate", "drops everything", always_drop));
         pipeline.add_stage(Processor::new("marker", "adds a marker field", add_marker));
@@ -292,13 +352,12 @@ mod tests {
         }
 
         // The second stage never ran because the first stage dropped the event.
-        assert!(pipeline.metadata().get_stage("marker").is_none());
-        let gate = pipeline.metadata().get_stage("gate").unwrap();
-        assert_eq!(gate.status, StageStatus::Skipped);
+        assert_eq!(stats_of(&pipeline, "marker").runs(), 0);
+        assert_eq!(stats_of(&pipeline, "gate").drops(), 1);
     }
 
     #[test]
-    fn test_error_stops_pipeline_and_records_failure() {
+    fn test_error_stops_pipeline() {
         let mut pipeline = Pipeline::new();
         pipeline.add_stage(Processor::new("boom", "always errors", always_error));
         pipeline.add_stage(Processor::new("marker", "adds a marker field", add_marker));
@@ -308,15 +367,13 @@ mod tests {
             _ => panic!("expected Error"),
         }
 
-        assert!(pipeline.metadata().get_stage("marker").is_none());
-        let boom = pipeline.metadata().get_stage("boom").unwrap();
-        assert_eq!(boom.status, StageStatus::Failed);
-        assert_eq!(boom.error_info, Some("boom".to_string()));
+        assert_eq!(stats_of(&pipeline, "marker").runs(), 0);
+        assert_eq!(stats_of(&pipeline, "boom").errors(), 1);
     }
 
     #[test]
-    fn test_disabled_metadata_still_runs_stages() {
-        let mut pipeline = Pipeline::with_metadata(PipelineMetadata::disabled());
+    fn test_without_timing_still_runs_and_counts() {
+        let mut pipeline = Pipeline::without_timing();
         pipeline.add_stage(Processor::new("marker", "adds a marker field", add_marker));
 
         match pipeline.run(sample_event()) {
@@ -325,6 +382,32 @@ mod tests {
             }
             _ => panic!("expected Continue"),
         }
-        assert!(pipeline.metadata().get_stage("marker").is_none());
+        let stats = stats_of(&pipeline, "marker");
+        assert_eq!(stats.runs(), 1);
+        assert_eq!(stats.total_time(), std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn test_pipeline_is_shareable_across_threads() {
+        let mut pipeline = Pipeline::new();
+        pipeline.add_stage(Processor::new("marker", "adds a marker field", add_marker));
+        let pipeline = std::sync::Arc::new(pipeline);
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let pipeline = pipeline.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        assert!(matches!(
+                            pipeline.run(sample_event()),
+                            ProcessResult::Continue(_)
+                        ));
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(stats_of(&pipeline, "marker").runs(), 200);
     }
 }

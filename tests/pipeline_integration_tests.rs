@@ -60,8 +60,9 @@ fn test_parsed_apache_event_flows_through_pipeline() {
         other => panic!("expected the event to continue through the pipeline, got {other:?}"),
     }
 
-    let stage = pipeline.metadata().get_stage("tag_internal_ip").unwrap();
-    assert!(stage.exit_time.is_some());
+    let (name, stats) = pipeline.stats()[0];
+    assert_eq!(name, "tag_internal_ip");
+    assert_eq!(stats.runs(), 1);
 }
 
 #[test]

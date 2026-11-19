@@ -631,12 +631,12 @@ pub enum Outcome {
 /// [`Pipeline`] segments separated by [`LookupPoint`]s:
 /// `segment 0 → point 0 → segment 1 → point 1 → …`.
 ///
-/// Like [`Pipeline`], one instance per worker thread; the lookup points are
-/// shared between them.
+/// Like [`Pipeline`], it takes `&self` and can be shared by every worker
+/// thread, as can its lookup points.
 pub struct SegmentedPipeline {
     segments: Vec<Pipeline>,
     points: Vec<Arc<LookupPoint>>,
-    last_sweep: Instant,
+    last_sweep: Mutex<Instant>,
 }
 
 /// How often [`SegmentedPipeline::drain_resumed`] checks deadlines.
@@ -648,7 +648,7 @@ impl SegmentedPipeline {
         Self {
             segments: vec![first],
             points: Vec::new(),
-            last_sweep: Instant::now(),
+            last_sweep: Mutex::new(Instant::now()),
         }
     }
 
@@ -670,11 +670,11 @@ impl SegmentedPipeline {
     }
 
     /// Run a new event from the first segment.
-    pub fn run(&mut self, event: Event) -> Outcome {
+    pub fn run(&self, event: Event) -> Outcome {
         self.run_from(0, event)
     }
 
-    fn run_from(&mut self, mut segment: usize, mut event: Event) -> Outcome {
+    fn run_from(&self, mut segment: usize, mut event: Event) -> Outcome {
         loop {
             match self.segments[segment].run(event) {
                 ProcessResult::Continue(next) => match self.points.get(segment) {
@@ -695,10 +695,17 @@ impl SegmentedPipeline {
     /// Release timed-out events, then continue up to `max` resumed events
     /// per lookup point through the rest of the pipeline. Call it from every
     /// batch and from [`crate::processing::workers::Worker::idle`].
-    pub fn drain_resumed(&mut self, max: usize) -> Vec<ProcessResult> {
+    pub fn drain_resumed(&self, max: usize) -> Vec<ProcessResult> {
         let now = Instant::now();
-        if now.duration_since(self.last_sweep) >= SWEEP_EVERY {
-            self.last_sweep = now;
+        // One thread sweeps; the others skip rather than wait.
+        let sweep = match self.last_sweep.try_lock() {
+            Ok(mut last) if now.duration_since(*last) >= SWEEP_EVERY => {
+                *last = now;
+                true
+            }
+            _ => false,
+        };
+        if sweep {
             for point in &self.points {
                 point.expire(now);
             }
@@ -1185,7 +1192,7 @@ mod tests {
         rdns.set_notifier(move || {
             n.fetch_add(1, Ordering::SeqCst);
         });
-        let mut pipeline =
+        let pipeline =
             SegmentedPipeline::new(Pipeline::new()).then_lookup(rdns.clone(), Pipeline::new());
 
         // Three events, one key: one request, one notification.
@@ -1228,7 +1235,7 @@ mod tests {
     #[test]
     fn events_without_a_key_pass_untouched() {
         let rdns = point(|s| s);
-        let mut pipeline =
+        let pipeline =
             SegmentedPipeline::new(Pipeline::new()).then_lookup(rdns.clone(), Pipeline::new());
         let plain = Event::new(
             Timestamp::now(),
@@ -1271,7 +1278,7 @@ mod tests {
     #[test]
     fn deadline_releases_events_as_timeout() {
         let rdns = point(|s| s.with_deadline(Duration::ZERO));
-        let mut pipeline =
+        let pipeline =
             SegmentedPipeline::new(Pipeline::new()).then_lookup(rdns.clone(), Pipeline::new());
         assert!(matches!(
             pipeline.run(event("203.0.113.5")),
@@ -1346,7 +1353,7 @@ mod tests {
         b.add_stage(crate::processing::pipeline::Processor::new(
             "tag", "tag", tag,
         ));
-        let mut pipeline = SegmentedPipeline::new(Pipeline::new()).then_lookup(rdns.clone(), b);
+        let pipeline = SegmentedPipeline::new(Pipeline::new()).then_lookup(rdns.clone(), b);
         assert!(matches!(
             pipeline.run(event("203.0.113.1")),
             Outcome::Parked

@@ -1,5 +1,6 @@
 pub mod common_parsers;
 pub mod err;
+mod priorities;
 pub mod registry;
 pub mod result;
 pub mod transport;

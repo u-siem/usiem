@@ -3,7 +3,6 @@ pub mod field;
 pub mod fields;
 pub mod hash;
 pub mod json;
-pub mod metadata;
 pub mod origin;
 pub mod raw;
 pub mod schema;
