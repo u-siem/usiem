@@ -11,15 +11,21 @@ pub mod transport_registry;
 
 use crate::event::RawEvent;
 use crate::ingest::parser::result::ParseResult;
+use std::sync::Arc;
 
 // Re-export transport types for convenience
 pub use transport::{TransportParser, TransportParserFn};
 pub use transport_registry::TransportRegistry;
 
-/// Type alias for parser function - takes ownership of RawEvent
-pub type ParserFn = fn(RawEvent) -> ParseResult;
+/// A parser's function: takes ownership of the [`RawEvent`] and hands it
+/// back inside [`ParseResult::NoMatch`] when the log isn't its format.
+///
+/// A shared closure, so a parser can carry configuration (a time zone, a
+/// field mapping, a compiled rule set). A plain `fn` item works as well.
+pub type ParserFn = Arc<dyn Fn(RawEvent) -> ParseResult + Send + Sync>;
 
-/// High-performance parser struct - no trait overhead
+/// A content parser: an identity plus the function that does the work.
+/// Cheap to clone (the function is reference-counted).
 #[derive(Clone)]
 pub struct LogParser {
     /// Unique identifier for this parser
@@ -41,20 +47,33 @@ impl LogParser {
         id: &'static str,
         name: &'static str,
         description: &'static str,
-        parse_fn: ParserFn,
+        parse_fn: impl Fn(RawEvent) -> ParseResult + Send + Sync + 'static,
     ) -> Self {
         Self {
             id,
             name,
             description,
-            parse_fn,
+            parse_fn: Arc::new(parse_fn),
         }
+    }
+
+    /// Runs this parser over an already-built [`RawEvent`].
+    pub fn call(&self, raw_event: RawEvent) -> ParseResult {
+        (self.parse_fn)(raw_event)
     }
 
     /// Parse a log using this parser's function
     /// Creates a RawEvent from the log text and passes it to the parser
     pub fn parse(&self, log_text: &str, source: &str) -> ParseResult {
-        let raw_event = RawEvent::from_log(log_text, source);
-        (self.parse_fn)(raw_event)
+        self.call(RawEvent::from_log(log_text, source))
+    }
+}
+
+impl std::fmt::Debug for LogParser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogParser")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
     }
 }

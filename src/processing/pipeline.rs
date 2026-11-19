@@ -2,9 +2,9 @@
 //!
 //! # Design
 //!
-//! Like [`crate::ingest::parser::LogParser`], a [`Processor`] wraps a plain
-//! `fn` pointer rather than a `dyn Trait` — consistent with this crate's
-//! existing "no trait overhead" convention for hot-path stages. A [`Pipeline`]
+//! Like [`crate::ingest::parser::LogParser`], a [`Processor`] wraps a shared
+//! closure (a plain `fn` item works too), so a stage can carry its own
+//! configuration or a handle to a dataset. A [`Pipeline`]
 //! runs a named, ordered sequence of [`Processor`]s over an [`Event`],
 //! recording per-stage timing and status in a [`PipelineMetadata`].
 //!
@@ -52,13 +52,13 @@
 use crate::event::CoreEvent as Event;
 use crate::event::metadata::PipelineMetadata;
 
-/// Type alias for a pipeline processing stage - takes ownership of an `Event`.
-pub type ProcessorFn = fn(Event) -> ProcessResult;
+/// A pipeline stage's function: takes ownership of an `Event`.
+pub type ProcessorFn = std::sync::Arc<dyn Fn(Event) -> ProcessResult + Send + Sync>;
 
 /// A single named pipeline stage wrapping a processing function.
 ///
-/// Mirrors [`crate::ingest::parser::LogParser`]'s design: a plain fn pointer,
-/// no trait overhead.
+/// Mirrors [`crate::ingest::parser::LogParser`]'s design: an identity plus a
+/// shared closure.
 #[derive(Clone)]
 pub struct Processor {
     /// Unique, stable name for this stage — used as the key into
@@ -75,11 +75,15 @@ pub struct Processor {
 
 impl Processor {
     /// Create a new processing stage with the given function.
-    pub fn new(name: &'static str, description: &'static str, process_fn: ProcessorFn) -> Self {
+    pub fn new(
+        name: &'static str,
+        description: &'static str,
+        process_fn: impl Fn(Event) -> ProcessResult + Send + Sync + 'static,
+    ) -> Self {
         Self {
             name,
             description,
-            process_fn,
+            process_fn: std::sync::Arc::new(process_fn),
         }
     }
 }
@@ -250,6 +254,30 @@ mod tests {
         let stage = pipeline.metadata().get_stage("marker").unwrap();
         assert_eq!(stage.status, StageStatus::Completed);
         assert!(stage.exit_time.is_some());
+    }
+
+    #[test]
+    fn test_stage_can_capture_configuration() {
+        let tag = String::from("from-config");
+        let mut pipeline = Pipeline::new();
+        pipeline.add_stage(Processor::new(
+            "tag",
+            "adds a configured tag",
+            move |mut event| {
+                event.add_field("tag", FieldValue::string(tag.clone()));
+                ProcessResult::Continue(event)
+            },
+        ));
+
+        match pipeline.run(sample_event()) {
+            ProcessResult::Continue(event) => {
+                assert_eq!(
+                    event.get_field("tag"),
+                    Some(&FieldValue::str("from-config"))
+                );
+            }
+            _ => panic!("expected Continue"),
+        }
     }
 
     #[test]

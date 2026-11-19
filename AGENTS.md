@@ -210,9 +210,13 @@ benches/                     # Criterion benchmarks (harness = false)
   `enrichment/manager.rs` is a monotonic merge timer, not a datetime — leave
   it.
 - **Two different trait-shape conventions, used deliberately:**
-  - Stateless, hot-path stages are plain `fn` pointers, **not** `dyn Trait`
-    (`LogParser`/`ParserFn`, `Processor`/`ProcessorFn`, `TransportParser`).
-    Don't refactor these to trait objects.
+  - Hot-path stages are an identity (`id`/`name`/`description`) plus a
+    shared closure, `Arc<dyn Fn(..) + Send + Sync>` (`LogParser`/`ParserFn`,
+    `Processor`/`ProcessorFn`, `TransportParser`/`TransportParserFn`,
+    `LookupSpec`'s `KeyFn`/`ApplyFn`). Constructors take `impl Fn`, so a
+    plain `fn` item and a closure capturing configuration both work. Don't
+    turn these into traits; don't go back to bare `fn` pointers (they forced
+    consumers into globals for configuration).
   - Stateful external integrations (need to hold a socket, file handle,
     buffer, etc.) are traits implemented by the consumer, with no bundled
     implementation: `Collector` (ingest), `Sink` (output), `Logger`

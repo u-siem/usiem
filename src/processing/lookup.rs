@@ -109,11 +109,11 @@ pub type LookupKey = Text;
 /// Extracts the lookup key from an event, or `None` to skip the lookup.
 /// This is also the pre-filter: return `None` for events that should never
 /// reach the service (private IPs, internal domains, uninteresting events).
-pub type KeyFn = fn(&Event) -> Option<LookupKey>;
+pub type KeyFn = Arc<dyn Fn(&Event) -> Option<LookupKey> + Send + Sync>;
 
 /// Writes a lookup answer into the event. `None` means the service had no
 /// answer for the key (a negative result).
-pub type ApplyFn = fn(&mut Event, Option<&FieldValue>);
+pub type ApplyFn = Arc<dyn Fn(&mut Event, Option<&FieldValue>) + Send + Sync>;
 
 /// One key's answer from an [`AsyncLookup`].
 #[derive(Debug, Clone, PartialEq)]
@@ -255,7 +255,7 @@ impl LookupCache {
 }
 
 /// The static description of a lookup point.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct LookupSpec {
     /// Stable name, used in the `enrichment.<name>.*` fields.
     pub name: &'static str,
@@ -277,12 +277,17 @@ pub struct LookupSpec {
 impl LookupSpec {
     /// A spec with a 2 s deadline, room for 10 000 waiting events and a
     /// 100 000-key cache.
-    pub fn new(name: &'static str, description: &'static str, key: KeyFn, apply: ApplyFn) -> Self {
+    pub fn new(
+        name: &'static str,
+        description: &'static str,
+        key: impl Fn(&Event) -> Option<LookupKey> + Send + Sync + 'static,
+        apply: impl Fn(&mut Event, Option<&FieldValue>) + Send + Sync + 'static,
+    ) -> Self {
         Self {
             name,
             description,
-            key,
-            apply,
+            key: Arc::new(key),
+            apply: Arc::new(apply),
             deadline: Duration::from_secs(2),
             max_parked: 10_000,
             cache_capacity: 100_000,
