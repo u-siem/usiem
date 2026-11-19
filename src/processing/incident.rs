@@ -20,7 +20,7 @@
 
 use crate::event::core::RawData;
 use crate::event::field::{FieldValue, Text, Timestamp};
-use crate::event::{CoreEvent, Origin};
+use crate::event::{Event, Origin};
 use crate::processing::entity::EntityRef;
 use crate::processing::message::LocalizedMessage;
 use crate::processing::signal::{Confidence, EventRef, Severity, Signal};
@@ -84,8 +84,8 @@ impl From<EventRef> for Evidence {
     }
 }
 
-impl From<&CoreEvent> for Evidence {
-    fn from(event: &CoreEvent) -> Self {
+impl From<&Event> for Evidence {
+    fn from(event: &Event) -> Self {
         Evidence::Event(event.into())
     }
 }
@@ -252,11 +252,11 @@ impl Incident {
         IncidentId(hasher.finish())
     }
 
-    /// Convert this incident into a [`CoreEvent`], so it can be shipped
+    /// Convert this incident into a [`Event`], so it can be shipped
     /// through the same [`crate::processing::sink::Sink`] used for ordinary
     /// events and `Signal`s. Fields are namespaced under `incident.*`;
     /// `original_time` is set to `first_seen`.
-    pub fn into_event(self) -> CoreEvent {
+    pub fn into_event(self) -> Event {
         let id = self.id();
         let first_seen = self.first_seen;
         let last_seen = self.last_seen;
@@ -273,7 +273,7 @@ impl Incident {
         let techniques_field =
             FieldValue::Array(self.techniques.into_iter().map(FieldValue::Str).collect());
 
-        let mut event = CoreEvent::new(
+        let mut event = Event::new(
             Timestamp::now(),
             first_seen,
             Origin::from_hostname("usiem-correlation"),
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn test_incident_into_event_carries_evidence() {
         let opened_at = Timestamp::from_secs(1_700_000_000);
-        let source_event = CoreEvent::new(
+        let source_event = Event::new(
             Timestamp::now(),
             opened_at,
             Origin::from_hostname("test-host"),
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn test_evidence_from_conversions() {
         let opened_at = Timestamp::from_secs(1_700_000_000);
-        let source_event = CoreEvent::new(
+        let source_event = Event::new(
             Timestamp::now(),
             opened_at,
             Origin::from_hostname("test-host"),

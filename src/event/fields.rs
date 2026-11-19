@@ -4,7 +4,7 @@
 //!
 //! Parsers, enrichment, query front-ends and rule engines that agree on these
 //! names can interoperate without per-source field mappings. Using them is
-//! optional: `CoreEvent` fields are plain strings, and nothing in this crate
+//! optional: `Event` fields are plain strings, and nothing in this crate
 //! rejects a name that isn't listed here.
 //!
 //! The `ARTIFACT_*` names are not ECS. They mirror forensic-rs
@@ -13,9 +13,9 @@
 //!
 //! ```
 //! use usiem::event::fields;
-//! use usiem::event::{CoreEvent, FieldValue, Origin, RawData};
+//! use usiem::event::{Event, FieldValue, Origin, RawData};
 //!
-//! let mut event = CoreEvent::new(
+//! let mut event = Event::new(
 //!     0.into(),
 //!     0.into(),
 //!     Origin::Collector("demo".into()),

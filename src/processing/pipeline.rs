@@ -21,7 +21,7 @@
 //!
 //! ```
 //! use usiem::processing::pipeline::{Pipeline, ProcessResult, Processor};
-//! use usiem::event::{CoreEvent as Event, Origin, RawData};
+//! use usiem::event::{Event as Event, Origin, RawData};
 //! use usiem::event::field::{FieldValue, Timestamp};
 //!
 //! let threshold = 8; // configuration captured by the stage
@@ -53,7 +53,7 @@
 //! assert_eq!(pipeline.stats()[0].1.runs(), 1);
 //! ```
 
-use crate::event::CoreEvent as Event;
+use crate::event::Event;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 

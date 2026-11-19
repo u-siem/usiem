@@ -4,7 +4,7 @@
 //! had never been exercised together anywhere in the test suite — each subsystem
 //! was only ever tested in isolation.
 
-use usiem::event::CoreEvent as Event;
+use usiem::event::Event;
 use usiem::event::field::FieldValue;
 use usiem::prelude::{ParseResult, ParserRegistry, RawEvent, apache_common_parser};
 use usiem::processing::pipeline::{Pipeline, ProcessResult, Processor};

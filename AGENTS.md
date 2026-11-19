@@ -109,7 +109,7 @@ src/
 ├── mcp/                     # feature `mcp` (= `json`) only. McpSurface: CapabilityCatalog + Authorizer
 │                            # -> MCP tools/resources/prompts + call_tool. Data model only — no JSON-RPC
 │                            # framing, no transport, no OAuth. See its module docs before extending it.
-├── event/                   # core data model: Event (core.rs, aliased CoreEvent — see gotcha below),
+├── event/                   # core data model: Event (core.rs; see "Event vs ObjectBuilder" below),
 │                            # RawEvent, FieldValue (typed field system), Origin, EventId, Schema
 │                            # (+ json_schema.rs, feature `json`: Schema::to_json_schema, consumed by mcp),
 │                            # fields.rs: well-known (ECS + forensic-rs artifact.*) field-name
@@ -263,17 +263,15 @@ benches/                     # Criterion benchmarks (harness = false)
   not duplication to clean up.
 - No enforced import ordering (no rustfmt config exists) — don't impose one.
 
-## A real naming footgun: `Event` vs `CoreEvent`
+## `Event` vs `ObjectBuilder` (and the old `CoreEvent`)
 
-`crate::event::Event` (and `usiem::prelude::Event`) is a type alias for
-`ObjectBuilder` (a fluent builder for `FieldValue::Object` trees) — **not**
-the actual SIEM event struct. The real event type (`arrival_time`,
-`original_time`, `origin`, `raw_data`, `fields`) lives in `src/event/core.rs`
-and is re-exported as `CoreEvent` specifically to dodge this collision (see
-`src/ingest/parser/result.rs:2` for the established `use crate::event::CoreEvent as Event;`
-convention — follow it in new code rather than `use crate::event::Event;`).
-This is a known, pre-existing wart, not something to "fix" by renaming either
-type without a deliberate decision — that's a public-API-breaking change.
+`usiem::event::Event` is the SIEM event struct (`arrival_time`,
+`original_time`, `origin`, `raw_data`, `fields`, in `src/event/core.rs`).
+The fluent builder for `FieldValue::Object` trees is `ObjectBuilder` only.
+Until 0.2 `Event` named the builder and the struct was re-exported as
+`CoreEvent`; `CoreEvent` survives as a `#[deprecated]` alias for one release
+so `use usiem::event::CoreEvent as Event;` keeps compiling. New code imports
+`usiem::event::Event`.
 
 ## Testing conventions
 

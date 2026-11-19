@@ -47,7 +47,7 @@
 //! ```
 //! use std::sync::Arc;
 //! use std::time::Duration;
-//! use usiem::event::{CoreEvent as Event, FieldValue, Origin, RawData, Timestamp};
+//! use usiem::event::{Event as Event, FieldValue, Origin, RawData, Timestamp};
 //! use usiem::processing::lookup::{
 //!     LookupKey, LookupPoint, LookupResult, LookupSpec, Outcome, SegmentedPipeline,
 //! };
@@ -90,7 +90,7 @@
 //! assert_eq!(event.get_field("source.domain"), Some(&FieldValue::Str("host.example".into())));
 //! ```
 
-use crate::event::CoreEvent as Event;
+use crate::event::Event;
 use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::processing::pipeline::{Pipeline, ProcessResult};
 use crate::processing::workers::{PushError, Queue};

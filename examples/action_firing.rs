@@ -8,7 +8,7 @@
 //! Run with: `cargo run --example action_firing`
 
 use std::sync::Arc;
-use usiem::event::CoreEvent as Event;
+use usiem::event::Event;
 use usiem::prelude::*;
 
 /// A firewall integration's own implementation of "block_ip" — knows

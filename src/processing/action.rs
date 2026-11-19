@@ -82,7 +82,7 @@
 //! [`crate::security::RoleAuthorizer`] as a bundled static-RBAC mechanism)
 //! before a caller ever sees or fires a capability, and
 //! [`ActionRegistry::invoke_as`] unconditionally produces an audit
-//! [`crate::event::CoreEvent`] for every attempt — allowed, denied, or
+//! [`crate::event::Event`] for every attempt — allowed, denied, or
 //! held for approval — via [`AuthorizedInvocationResult::audit`].
 //! [`ActionRegistry::list`]/[`ActionRegistry::invoke`] remain exactly as
 //! before: unauthenticated, for trusted in-process code with no
@@ -139,7 +139,7 @@
 
 use crate::event::core::RawData;
 use crate::event::field::{FieldMap, FieldValue, Text, Timestamp};
-use crate::event::{CoreEvent, Origin, Schema, SchemaError, SchemaField};
+use crate::event::{Event, Origin, Schema, SchemaError, SchemaField};
 use crate::processing::context::InvocationContext;
 use crate::processing::message::LocalizedMessage;
 use crate::security::{Authorizer, AuthzRequest, Decision};
@@ -384,15 +384,15 @@ impl ActionOutcome {
         matches!(self.status, ActionStatus::Success)
     }
 
-    /// Convert this outcome into a [`CoreEvent`], so a fired action's result
+    /// Convert this outcome into a [`Event`], so a fired action's result
     /// can flow through the same [`crate::processing::sink::Sink`] used for
     /// ordinary events. Fields are namespaced under `action.*`, mirroring
     /// [`crate::processing::signal::Signal::into_event`]; `original_time` is
     /// set to when the action completed.
-    pub fn into_event(self, name: &str, provider: &str, params: &FieldMap) -> CoreEvent {
+    pub fn into_event(self, name: &str, provider: &str, params: &FieldMap) -> Event {
         let completed_at = self.completed_at;
         let text = self.message.text.clone();
-        let mut event = CoreEvent::new(
+        let mut event = Event::new(
             Timestamp::now(),
             completed_at,
             Origin::from_hostname("usiem-action"),
@@ -479,7 +479,7 @@ pub struct ActionInvocationResult {
 }
 
 /// One provider's result from a fan-out [`ActionRegistry::invoke_as`] call —
-/// like [`ActionInvocationResult`], plus the audit [`CoreEvent`] that was
+/// like [`ActionInvocationResult`], plus the audit [`Event`] that was
 /// unconditionally produced for this attempt (see the module's "Security
 /// note"). `result` is `Err(ActionError::Unauthorized(_))` or
 /// `Err(ActionError::ApprovalRequired(_))` when the
@@ -489,7 +489,7 @@ pub struct ActionInvocationResult {
 pub struct AuthorizedInvocationResult {
     pub provider: String,
     pub result: Result<ActionOutcome, ActionError>,
-    pub audit: CoreEvent,
+    pub audit: Event,
 }
 
 /// A named, runtime-discoverable registry mapping a capability name to
@@ -591,7 +591,7 @@ impl ActionRegistry {
 
     /// Fan out to every provider registered under `name`, checking `ctx`
     /// against `authz` before calling each one and unconditionally
-    /// producing an audit [`CoreEvent`] for the attempt — see
+    /// producing an audit [`Event`] for the attempt — see
     /// [`AuthorizedInvocationResult`] and the module's "Security note".
     pub fn invoke_as(
         &self,
@@ -657,7 +657,7 @@ impl ActionRegistry {
         }
     }
 
-    /// Builds the mandatory audit [`CoreEvent`] for one [`ActionRegistry::invoke_as`]
+    /// Builds the mandatory audit [`Event`] for one [`ActionRegistry::invoke_as`]
     /// attempt, regardless of its outcome. Fields are namespaced under
     /// `action.*`/`principal.*`/`authz.*`/`tenant.*`/`request.*`, mirroring
     /// [`ActionOutcome::into_event`]'s `action.*` convention.
@@ -667,9 +667,9 @@ impl ActionRegistry {
         decision: &Decision,
         result: &Result<ActionOutcome, ActionError>,
         params: &FieldMap,
-    ) -> CoreEvent {
+    ) -> Event {
         let now = Timestamp::now();
-        let mut event = CoreEvent::new(
+        let mut event = Event::new(
             now,
             now,
             Origin::from_hostname("usiem-action"),

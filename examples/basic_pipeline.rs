@@ -12,7 +12,7 @@
 //! Run with: `cargo run --example basic_pipeline`
 
 use std::collections::HashMap;
-use usiem::event::CoreEvent as Event;
+use usiem::event::Event;
 use usiem::observability::Record;
 use usiem::prelude::*;
 

@@ -20,8 +20,13 @@ pub mod json_schema;
 #[cfg(feature = "serde")]
 pub mod core_serde;
 
-pub use core::{Event as CoreEvent, EventId, RawData};
-pub use field::{Event, EventBuilder, FieldMap, FieldValue, Ip, ObjectBuilder, Timestamp};
+pub use core::{Event, EventId, RawData};
+pub use field::{FieldMap, FieldValue, Ip, ObjectBuilder, Timestamp};
+
+/// The old name of [`Event`], from when `Event` named the field-object
+/// builder (now only [`ObjectBuilder`]).
+#[deprecated(note = "use `usiem::event::Event`")]
+pub type CoreEvent = Event;
 pub use json::JsonValue;
 pub use origin::Origin;
 pub use raw::RawEvent;

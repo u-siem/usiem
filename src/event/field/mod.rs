@@ -27,7 +27,7 @@ pub mod value {
     pub use super::getter::*;
 }
 
-pub use builder::{Event, EventBuilder, ObjectBuilder};
+pub use builder::ObjectBuilder;
 pub use command_line::CommandLine;
 pub use error::FieldConversionError;
 pub use field_map::{FieldLookup, FieldMap, FieldMapIter};

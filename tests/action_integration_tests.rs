@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use usiem::event::CoreEvent as Event;
+use usiem::event::Event;
 use usiem::event::field::{FieldMap, FieldValue, Timestamp};
 use usiem::event::{Origin, RawData};
 use usiem::processing::action::{

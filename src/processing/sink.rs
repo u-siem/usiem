@@ -65,7 +65,7 @@
 //! }
 //! ```
 
-use crate::event::CoreEvent as Event;
+use crate::event::Event;
 
 /// Framework interface for event output destinations.
 ///

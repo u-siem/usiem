@@ -20,7 +20,7 @@
 use crate::event::core::RawData;
 use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::event::hash::StableHasher;
-use crate::event::{CoreEvent, EventId, Origin};
+use crate::event::{Event, EventId, Origin};
 use crate::processing::entity::EntityRef;
 use crate::processing::message::LocalizedMessage;
 use crate::processing::rating::RiskScore;
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 // `processing::signal::{Severity, Confidence}` keeps working.
 pub use crate::processing::rating::{Confidence, Severity};
 
-/// A lightweight pointer back to a raw [`CoreEvent`] — its [`EventId`] plus
+/// A lightweight pointer back to a raw [`Event`] — its [`EventId`] plus
 /// its [`Timestamp`], not the full event, so referencing it doesn't
 /// duplicate raw payloads. Used by [`Signal::source_events`] and
 /// [`crate::processing::incident::Evidence::Event`].
@@ -40,8 +40,8 @@ pub struct EventRef {
     pub timestamp: Timestamp,
 }
 
-impl From<&CoreEvent> for EventRef {
-    fn from(event: &CoreEvent) -> Self {
+impl From<&Event> for EventRef {
+    fn from(event: &Event) -> Self {
         Self {
             id: event.id(),
             timestamp: event.original_time(),
@@ -275,11 +275,11 @@ impl Signal {
         FieldValue::Object(object)
     }
 
-    /// Convert this signal into a [`CoreEvent`], so it can be shipped
+    /// Convert this signal into a [`Event`], so it can be shipped
     /// through the same [`crate::processing::sink::Sink`] used for ordinary
     /// events. Fields are namespaced under `signal.*`; `original_time` is
     /// set to `observed_at`.
-    pub fn into_event(self) -> CoreEvent {
+    pub fn into_event(self) -> Event {
         let observed_at = self.observed_at;
         let text = self.message.text.clone();
         let mut fields = match self.to_field_value() {
@@ -288,7 +288,7 @@ impl Signal {
         };
         fields.remove("observed_at"); // carried as the event's original_time instead
 
-        let mut event = CoreEvent::new(
+        let mut event = Event::new(
             Timestamp::now(),
             observed_at,
             Origin::from_hostname("usiem-correlation"),
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn test_signal_into_event_carries_fields() {
         let observed_at = Timestamp::from_secs(1_700_000_000);
-        let source_event = CoreEvent::new(
+        let source_event = Event::new(
             Timestamp::now(),
             observed_at,
             Origin::from_hostname("test-host"),

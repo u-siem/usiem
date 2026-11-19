@@ -1,5 +1,5 @@
 use super::err::{DiscardReason, ParsingError};
-use crate::event::{CoreEvent as Event, RawEvent};
+use crate::event::{Event, RawEvent};
 
 #[derive(Debug)]
 pub enum ParseResult {
