@@ -19,13 +19,12 @@
 
 use crate::event::core::RawData;
 use crate::event::field::{FieldValue, Text, Timestamp};
+use crate::event::hash::StableHasher;
 use crate::event::{CoreEvent, EventId, Origin};
 use crate::processing::entity::EntityRef;
 use crate::processing::message::LocalizedMessage;
 use crate::processing::rating::RiskScore;
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 // Moved to `rating` so enrichment types share them; re-exported here so
 // `processing::signal::{Severity, Confidence}` keeps working.
@@ -190,11 +189,11 @@ impl Signal {
     /// `context`, which could shift slightly between equivalent
     /// re-evaluations without changing what actually happened.
     pub fn id(&self) -> SignalId {
-        let mut hasher = DefaultHasher::new();
-        self.rule_name.hash(&mut hasher);
-        self.key.hash(&mut hasher);
-        self.observed_at.as_nanos().hash(&mut hasher);
-        self.message.template_id.hash(&mut hasher);
+        let mut hasher = StableHasher::new();
+        hasher.write_str(&self.rule_name);
+        hasher.write_str(&self.key);
+        hasher.write_timestamp(self.observed_at);
+        hasher.write_str(&self.message.template_id);
         SignalId(hasher.finish())
     }
 
@@ -352,6 +351,21 @@ mod tests {
         let b = a.clone();
 
         assert_eq!(a.id(), b.id());
+    }
+
+    /// Pins the exact id: signal ids are stored with alerts, so a change
+    /// here breaks stored links. Revert the hashing change, don't update this.
+    #[test]
+    fn test_signal_id_golden_value() {
+        let signal = Signal::new(
+            "repeated_failed_login",
+            "alice",
+            Severity::High,
+            Confidence::new(80),
+            sample_message(),
+            Timestamp::from_secs(1_700_000_000),
+        );
+        assert_eq!(signal.id().to_string(), "93cd9355d40edbe1");
     }
 
     #[test]

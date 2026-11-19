@@ -1,4 +1,6 @@
 use crate::event::field::{FieldValue, Timestamp};
+use crate::event::fields;
+use crate::event::hash::StableHasher;
 use crate::event::json::JsonValue;
 use crate::event::origin::Origin;
 use std::collections::HashMap;
@@ -94,21 +96,46 @@ impl Event {
     /// A stable identifier for this event, suitable for deduplication.
     ///
     /// Derived from [`Event::origin`], [`Event::original_time`], and the raw
-    /// content — deliberately *not* [`Event::arrival_time`], so that a
-    /// re-delivered duplicate of the same source event (which will have a
-    /// different arrival time but the same origin/original_time/content)
-    /// produces the same [`EventId`]. This is a content hash, not a random
-    /// globally-unique identifier: two genuinely distinct events that happen
-    /// to share origin, original_time, and raw content will collide.
+    /// content — deliberately *not* [`Event::arrival_time`] or the parsed
+    /// fields, so that a re-delivered duplicate of the same source event
+    /// (different arrival time, same origin/original_time/content) produces
+    /// the same [`EventId`], and enrichment never changes it. This is a
+    /// content hash, not a random globally-unique identifier: two genuinely
+    /// distinct events that share origin, original_time, and raw content
+    /// will collide.
+    ///
+    /// The value is fixed across builds and Rust releases (see
+    /// [`crate::event::hash`]), so it may be stored. For an event read back
+    /// from storage, prefer [`Event::stored_or_computed_id`]: data written by
+    /// older versions may carry an id this function no longer computes.
     pub fn id(&self) -> EventId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        self.origin.hash(&mut hasher);
-        self.original_time.as_nanos().hash(&mut hasher);
-        self.raw_data.as_string().hash(&mut hasher);
+        let mut hasher = StableHasher::new();
+        hasher.write_origin(&self.origin);
+        hasher.write_timestamp(self.original_time);
+        match &self.raw_data {
+            RawData::Text(text) => {
+                hasher.write_u8(0);
+                hasher.write_str(text);
+            }
+            RawData::Json(json) => {
+                hasher.write_u8(1);
+                hasher.write_str(&json.to_string());
+            }
+        }
         EventId(hasher.finish())
+    }
+
+    /// The id stored in the [`fields::EVENT_ID`] field, when it is present
+    /// and in the 16-hex-digit form [`EventId`]'s `Display` writes.
+    pub fn recorded_id(&self) -> Option<EventId> {
+        self.get_field(fields::EVENT_ID)?.as_str()?.parse().ok()
+    }
+
+    /// [`Event::recorded_id`] when present, otherwise [`Event::id`]: the id
+    /// to use for an event read back from storage, so links written when it
+    /// was stored keep resolving.
+    pub fn stored_or_computed_id(&self) -> EventId {
+        self.recorded_id().unwrap_or_else(|| self.id())
     }
 }
 
@@ -298,6 +325,45 @@ mod tests {
         );
 
         assert_eq!(event_a.id(), event_b.id());
+    }
+
+    /// Pins the exact id for fixed inputs. Ids are stored with events, so
+    /// if this test fails the change breaks every stored link: don't update
+    /// the constants, revert the hashing change.
+    #[test]
+    fn test_event_id_golden_values() {
+        let text = Event::new(
+            Timestamp::from_secs(0),
+            Timestamp::from_secs(1_700_000_000),
+            Origin::from_hostname("host-a"),
+            RawData::from_text("sshd[1]: Accepted password for alice"),
+        );
+        let json = Event::new(
+            Timestamp::from_secs(0),
+            Timestamp::from_secs(1_700_000_000),
+            Origin::from_ip(Ip::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+            RawData::from_json(JsonValue::object(vec![("k", JsonValue::string("v"))])),
+        );
+        assert_eq!(text.id().to_string(), "d91e831c0863f0f6");
+        assert_eq!(json.id().to_string(), "9a1811c1ce8e9b55");
+    }
+
+    #[test]
+    fn test_stored_id_wins_over_computed() {
+        let mut event = Event::new(
+            Timestamp::from_secs(0),
+            Timestamp::from_secs(1),
+            Origin::from_hostname("h"),
+            RawData::from_text("x"),
+        );
+        assert_eq!(event.recorded_id(), None);
+        assert_eq!(event.stored_or_computed_id(), event.id());
+        event.add_field(
+            fields::EVENT_ID.to_string(),
+            FieldValue::str("00000000000000ff"),
+        );
+        assert_eq!(event.recorded_id(), Some(EventId::from_u64(0xff)));
+        assert_eq!(event.stored_or_computed_id(), EventId::from_u64(0xff));
     }
 
     #[test]

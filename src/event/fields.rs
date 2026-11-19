@@ -26,6 +26,9 @@
 //! ```
 
 // --- event ---
+/// The event's [`crate::event::EventId`] in 16-hex-digit form, written
+/// when the event is stored so later links (alerts, evidence) can name it.
+pub const EVENT_ID: &str = "event.id";
 /// Outcome of the event: `success`, `failure` or `unknown`.
 pub const EVENT_OUTCOME: &str = "event.outcome";
 /// The action captured by the event, e.g. `user-login`, `process-started`.
