@@ -4,16 +4,16 @@
 //!
 //! A `Signal` is deliberately *not* analyst-facing on its own: it states a
 //! fact ("this looked suspicious"), not a judgment that a human should look
-//! at it right now. That judgment is [`crate::processing::incident::Incident`]'s
-//! job — an independent, application-driven aggregate built from `Signal`s
-//! and/or raw events once a rule decides the evidence is significant enough.
-//! See that module's docs for how the two relate.
+//! at it right now. That judgment (an alert or incident, with its own
+//! workflow: status, assignee, notes) is the application's, built from
+//! `Signal`s and/or raw events once a rule decides the evidence is
+//! significant enough.
 //!
 //! `Signal`s are typically produced by application code that implements its
 //! own correlation/detection logic (e.g. a time-windowed threshold counter —
 //! this crate deliberately has no correlation API of its own), and/or by
 //! consulting enrichment lookups such as
-//! [`crate::processing::enrichment::providers::ThreatIntelDataset`]/
+//! [`crate::processing::enrichment::CidrDataset`]/
 //! [`crate::processing::enrichment::providers::GeoIpDataset`] — the kind of
 //! "context or threat intelligence" a `Signal` is evaluated against.
 
@@ -32,8 +32,7 @@ pub use crate::processing::rating::{Confidence, Severity};
 
 /// A lightweight pointer back to a raw [`Event`] — its [`EventId`] plus
 /// its [`Timestamp`], not the full event, so referencing it doesn't
-/// duplicate raw payloads. Used by [`Signal::source_events`] and
-/// [`crate::processing::incident::Evidence::Event`].
+/// duplicate raw payloads. Used by [`Signal::source_events`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventRef {
     pub id: EventId,
@@ -70,8 +69,7 @@ impl std::fmt::Display for SignalId {
 
 /// An event (or cluster of events) evaluated against context or threat
 /// intelligence and flagged as potentially suspicious — not yet an explicit
-/// alarm. See the module docs for how this relates to
-/// [`crate::processing::incident::Incident`].
+/// alarm. See the module docs.
 ///
 /// # Example
 ///
@@ -200,9 +198,8 @@ impl Signal {
     /// `FieldValue::Object` form of every field, including `observed_at` —
     /// used both by [`Signal::into_event`] (which strips `observed_at` back
     /// out, since it plays the role of the resulting event's
-    /// `original_time`) and by
-    /// [`crate::processing::incident::Evidence::Signal`] when embedding this
-    /// signal as evidence inside an `Incident`.
+    /// `original_time`) and by applications embedding a signal as
+    /// evidence.
     pub(crate) fn to_field_value(&self) -> FieldValue {
         let mut object = HashMap::new();
         object.insert(Text::from("id"), FieldValue::string(self.id().to_string()));
@@ -275,9 +272,8 @@ impl Signal {
         FieldValue::Object(object)
     }
 
-    /// Convert this signal into a [`Event`], so it can be shipped
-    /// through the same [`crate::processing::sink::Sink`] used for ordinary
-    /// events. Fields are namespaced under `signal.*`; `original_time` is
+    /// Convert this signal into an [`Event`], so it can be stored
+    /// and searched like ordinary events. Fields are namespaced under `signal.*`; `original_time` is
     /// set to `observed_at`.
     pub fn into_event(self) -> Event {
         let observed_at = self.observed_at;

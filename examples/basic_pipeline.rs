@@ -1,10 +1,8 @@
 //! End-to-end example: parse raw logs, run them through a processing
-//! pipeline, correlate repeated failures into a `Signal`, escalate that into
-//! an `Incident` via a small custom rule, and ship everything through a
-//! `Sink` — wiring together every extension point this crate defines
-//! (`Collector`-style raw input, `LogParser`/`ParserRegistry`,
-//! `Pipeline`/`Processor`, `Signal`/`Incident`, `Sink`, and `observability`),
-//! plus a correlation rule (`FailedLoginCounter` below) that is deliberately
+//! pipeline, correlate repeated failures into a `Signal`, and print
+//! everything — wiring together `LogParser`/`ParserRegistry`,
+//! `Pipeline`/`Processor`, `Signal` and `observability`, plus a correlation
+//! rule (`FailedLoginCounter` below) that is deliberately
 //! *not* part of the crate's API — this crate has no correlation/rule-engine
 //! type of its own, so detecting "3 failed logins within 60s" is just plain
 //! application code, the same as `tag_internal_ip` below.
@@ -16,11 +14,11 @@ use usiem::event::Event;
 use usiem::observability::Record;
 use usiem::prelude::*;
 
-/// A trivial `Sink` that prints events to stdout. A real application would
-/// implement this over a file, Kafka producer, HTTP client, etc.
+/// A trivial output that prints events to stdout. A real application writes
+/// to its event store (a file, an index, a queue).
 struct StdoutSink;
 
-impl Sink for StdoutSink {
+impl StdoutSink {
     fn send(&mut self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let event_type = event
             .get_field("event_type")
@@ -153,7 +151,7 @@ fn main() {
             // `FailedLoginCounter` trip is exactly the kind of evaluation a
             // Signal exists to carry, optionally alongside enrichment
             // context (here stood in for by `with_context`, in place of a
-            // real `ThreatIntelDataset`/`GeoIpDataset` lookup).
+            // real threat-intel or `GeoIpDataset` lookup).
             let signal = Signal::new(
                 "repeated_failed_login",
                 client_ip,
@@ -172,28 +170,9 @@ fn main() {
             .with_source_events([EventRef::from(&event)])
             .with_context("threat_intel.note", "matches known brute-force pattern");
 
-            // Incident is independent of Signal — this crate ships no "N
-            // signals => Incident" primitive. Here a trivial custom rule
-            // ("any repeated_failed_login signal is worth an analyst's
-            // attention on its own") does the escalation; a real rule might
-            // instead accumulate several Signals before doing so.
-            let mut incident = Incident::new(
-                "brute_force_campaign",
-                client_ip,
-                Severity::Critical,
-                Confidence::new(90),
-                LocalizedMessage::new(
-                    "auth.brute_force_campaign",
-                    "en-US",
-                    format!("Sustained brute force activity from {client_ip}"),
-                ),
-                event.original_time(),
-            )
-            .with_techniques(["T1110"]);
-            incident.add_evidence(signal.clone());
-
+            // Whether this is worth an analyst's attention (an alert or
+            // incident, with its own workflow) is the application's call.
             sink.send(&signal.into_event()).unwrap();
-            sink.send(&incident.into_event()).unwrap();
         }
 
         sink.send(&event).unwrap();

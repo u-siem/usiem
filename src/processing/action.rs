@@ -5,13 +5,11 @@
 //!
 //! # Design
 //!
-//! Mirrors [`crate::processing::sink::Sink`]/[`crate::ingest::collector::Collector`]:
 //! [`Action`] is a contract only, with no concrete implementations shipped
-//! here. It deviates from those siblings in one way: `execute` takes `&self`
-//! rather than `&mut self`, because the same action is expected to run
-//! concurrently — fired by application code, by a `Sink`'s side effect, and
-//! (via [`ActionRegistry::invoke`]) alongside every other provider of the
-//! same capability at once. Any mutable state a real action needs (an HTTP
+//! here. `execute` takes `&self` because the same action is expected to run
+//! concurrently — fired by application code, by an output's side effect,
+//! and (via [`ActionRegistry::invoke`]) alongside every other provider of
+//! the same capability at once. Any mutable state a real action needs (an HTTP
 //! client, a rate limiter) is the implementor's own interior mutability, the
 //! same reason `AnyDataset` in [`crate::processing::enrichment::core`] is
 //! `&self`.
@@ -148,8 +146,7 @@ use std::sync::Arc;
 
 /// Framework interface for a fireable response action.
 ///
-/// `&self`, not `&mut self` (unlike [`crate::processing::sink::Sink`]/
-/// [`crate::ingest::collector::Collector`]) — see the module docs for why.
+/// `&self`, not `&mut self` — see the module docs for why.
 pub trait Action: Send + Sync {
     /// Static metadata describing this action: its capability name, which
     /// provider it is, a human-readable description, and its parameter
@@ -385,8 +382,7 @@ impl ActionOutcome {
     }
 
     /// Convert this outcome into a [`Event`], so a fired action's result
-    /// can flow through the same [`crate::processing::sink::Sink`] used for
-    /// ordinary events. Fields are namespaced under `action.*`, mirroring
+    /// can be stored and searched like ordinary events. Fields are namespaced under `action.*`, mirroring
     /// [`crate::processing::signal::Signal::into_event`]; `original_time` is
     /// set to when the action completed.
     pub fn into_event(self, name: &str, provider: &str, params: &FieldMap) -> Event {

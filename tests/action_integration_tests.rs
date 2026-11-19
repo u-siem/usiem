@@ -1,10 +1,10 @@
-//! End-to-end test wiring `Action`/`ActionRegistry` into a `Sink`.
+//! End-to-end test wiring `Action`/`ActionRegistry` into an event output.
 //!
-//! Proves the core requirement behind the primitive: a rule (or, here, a
-//! `Sink`'s own side effect) fires a capability by name, knowing nothing
+//! Proves the core requirement behind the primitive: a rule (or, here, an
+//! output's own side effect) fires a capability by name, knowing nothing
 //! about who implements it, and every independently-registered provider
 //! runs — with the same registry also reachable directly from application
-//! code, outside of any `Sink::send` call.
+//! code, outside of any output.
 
 use std::sync::{Arc, Mutex};
 
@@ -16,7 +16,6 @@ use usiem::processing::action::{
 };
 use usiem::processing::context::InvocationContext;
 use usiem::processing::message::LocalizedMessage;
-use usiem::processing::sink::Sink;
 use usiem::security::{Principal, PrincipalKind};
 
 fn system_ctx() -> InvocationContext {
@@ -55,7 +54,7 @@ impl Action for ToyProvider {
     }
 }
 
-/// A `Sink` test double that fires a capability as a side effect of
+/// An output test double that fires a capability as a side effect of
 /// receiving an event, then records every event it was asked to send —
 /// including the audit events produced from the fired action's outcomes.
 struct RecordingSink {
@@ -63,7 +62,7 @@ struct RecordingSink {
     sent: Mutex<Vec<String>>,
 }
 
-impl Sink for RecordingSink {
+impl RecordingSink {
     fn send(&mut self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.sent.lock().unwrap().push(event.raw_data().as_string());
 
@@ -118,14 +117,14 @@ fn test_sink_fires_action_reaching_every_registered_provider() {
 
     let sent = sink.sent.lock().unwrap();
     // The original event, plus one audit event per registered provider —
-    // the Sink never named "firewall" or "edr" anywhere in its own code.
+    // the output never named "firewall" or "edr" anywhere in its own code.
     assert_eq!(sent.len(), 3);
     assert!(sent.iter().any(|text| text.contains("firewall blocked")));
     assert!(sent.iter().any(|text| text.contains("edr blocked")));
 }
 
 #[test]
-fn test_direct_invoke_reaches_the_same_providers_outside_any_sink() {
+fn test_direct_invoke_reaches_the_same_providers_outside_any_output() {
     let mut registry = ActionRegistry::new();
     registry.register(Arc::new(ToyProvider {
         name: "block_ip",

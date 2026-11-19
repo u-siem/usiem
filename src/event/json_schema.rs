@@ -1,9 +1,8 @@
 //! [`Schema`] → JSON Schema, gated behind the `json` feature.
 //!
-//! The immediate consumer is [`crate::mcp`]'s `inputSchema` for each MCP
-//! tool (derived from an [`crate::processing::action::ActionDescriptor::params`]),
-//! but this stands on its own — anything that needs a JSON Schema view of a
-//! `Schema` can use it without pulling in the `mcp` feature.
+//! Typical use: describing an action's parameters
+//! ([`crate::processing::action::ActionDescriptor::params`]) to a UI, an
+//! API client or a tool-calling model.
 
 use super::field::FieldValue;
 use super::schema::{FieldConstraints, Schema, SchemaField, SchemaFieldType};

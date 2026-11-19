@@ -2,12 +2,9 @@
 //! sure).
 //!
 //! These are the one vocabulary for ratings across the crate: a
-//! [`crate::processing::signal::Signal`], an
-//! [`crate::processing::incident::Incident`] and the enrichment value types
-//! ([`crate::processing::enrichment::ThreatInfo`],
-//! [`crate::processing::enrichment::AssetInfo`],
-//! [`crate::processing::enrichment::UserProfile`]) all use them, so a
-//! threat-intel hit becomes a `Signal` without converting scales.
+//! [`crate::processing::signal::Signal`] and applications' own enrichment
+//! and incident types use them, so a threat-intel hit becomes a `Signal`
+//! without converting scales.
 //!
 //! [`Criticality`] and [`RiskLevel`] are aliases of [`Severity`] with their
 //! own documented meaning; being the same type, they compare with each

@@ -4,7 +4,7 @@
 //! [`SyslogFramer`] is sans-IO: the caller reads bytes from whatever
 //! socket or file it owns, [`push`](SyslogFramer::push)es them in, and pulls
 //! complete messages out with [`next_frame`](SyslogFramer::next_frame). No
-//! networking lives here, in keeping with [`crate::ingest::collector`].
+//! networking lives here: this crate does no I/O.
 //!
 //! Both RFC 6587 framings are detected per message, the way common syslog
 //! daemons do:

@@ -77,11 +77,12 @@ impl Action for EdrBlockIp {
     }
 }
 
-/// A trivial `Sink` that prints events to stdout, reused to ship each
-/// provider's outcome as an auditable event.
+/// A trivial output that prints events to stdout, reused to ship each
+/// provider's outcome as an auditable event. A real application writes to
+/// its event store instead.
 struct StdoutSink;
 
-impl Sink for StdoutSink {
+impl StdoutSink {
     fn send(&mut self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!(
             "[sink] {}",

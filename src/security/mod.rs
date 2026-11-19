@@ -11,7 +11,7 @@
 //! the rest of this crate through
 //! [`crate::processing::context::InvocationContext`].
 //!
-//! # Why this is in core, unlike `Sink`/`Collector`
+//! # Why this is in core, unlike inputs and outputs
 //!
 //! Authorization here isn't an external system this crate would otherwise
 //! avoid depending on (the way a firewall API or a Kafka broker is) — it's

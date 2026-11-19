@@ -194,23 +194,6 @@ impl Pipeline {
         self.stages.iter().map(|(p, s)| (p.name, s)).collect()
     }
 
-    /// A [`crate::capability::ComponentManifest`] for every registered
-    /// stage, derived from the `name`/`description` it already carries — this
-    /// is how a `Pipeline` participates in the capability catalog. See
-    /// `crate::capability` module docs.
-    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
-        self.stages()
-            .map(|stage| {
-                crate::capability::ComponentManifest::new(
-                    format!("processor/{}", stage.name),
-                    crate::capability::ComponentKind::Processor,
-                    stage.name,
-                    stage.description,
-                )
-            })
-            .collect()
-    }
-
     /// Run every stage in order over `event`, stopping early on [`ProcessResult::Drop`]
     /// or [`ProcessResult::Error`].
     pub fn run(&self, mut event: Event) -> ProcessResult {

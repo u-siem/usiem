@@ -7,9 +7,6 @@ pub mod transport;
 pub mod transport_parsers;
 pub mod transport_registry;
 
-//#[cfg(test)]
-//mod test;
-
 use crate::event::RawEvent;
 use crate::ingest::parser::result::ParseResult;
 use std::sync::Arc;

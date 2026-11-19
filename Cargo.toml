@@ -1,6 +1,6 @@
 [package]
 name = "usiem"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Modular, high-performance framework for building custom SIEM (Security Information and Event Management) solutions in Rust."
 license = "MIT"
@@ -36,15 +36,9 @@ criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1.0"
 
 [features]
-default = ["metadata"]
+default = []
 serde = ["dep:serde", "compact_str/serde"]
 json = ["dep:serde_json", "serde"]
-metadata = []
-# Tier-1 MCP support: the data model only (tools/resources/prompts derived
-# from the capability catalog and JSON Schema conversion) — no JSON-RPC
-# framing, no transport (stdio/HTTP), no OAuth. Those stay out of this
-# crate; see `src/mcp/mod.rs` module docs.
-mcp = ["json"]
 
 [[bench]]
 name = "parse_benchmarks"
@@ -57,7 +51,3 @@ harness = false
 [[bench]]
 name = "field_benchmarks"
 harness = false
-
-[[example]]
-name = "mcp_surface"
-required-features = ["mcp"]

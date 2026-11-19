@@ -2,11 +2,9 @@
 //!
 //! Mirrors the shape of the widely-used `log` crate (a global logger plus
 //! level filtering) but implemented in-house, per this crate's
-//! minimal-dependency philosophy (only `time` and `regex` today). Like the
-//! [`crate::processing::sink::Sink`]/[`crate::ingest::collector::Collector`]
-//! pattern, this is a framework interface with no bundled implementation:
-//! nothing is emitted unless a consuming application installs a [`Logger`]
-//! via [`set_logger`].
+//! minimal-dependency philosophy. This is a framework interface with no
+//! bundled implementation: nothing is emitted unless a consuming
+//! application installs a [`Logger`] via [`set_logger`].
 //!
 //! Internal call sites use the [`log_error!`](crate::log_error),
 //! [`log_warn!`](crate::log_warn), [`log_info!`](crate::log_info),

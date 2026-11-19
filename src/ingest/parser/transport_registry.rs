@@ -75,22 +75,6 @@ impl TransportRegistry {
         &self.config
     }
 
-    /// A [`crate::capability::ComponentManifest`] for every registered
-    /// transport parser — see [`crate::ingest::parser::registry::ParserRegistry::manifests`].
-    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
-        self.parsers
-            .iter()
-            .map(|parser| {
-                crate::capability::ComponentManifest::new(
-                    format!("transport_parser/{}", parser.id),
-                    crate::capability::ComponentKind::TransportParser,
-                    parser.name,
-                    parser.description,
-                )
-            })
-            .collect()
-    }
-
     /// Register a new transport parser.
     ///
     /// # Panics

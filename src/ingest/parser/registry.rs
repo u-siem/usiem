@@ -58,24 +58,6 @@ impl ParserRegistry {
         &self.config
     }
 
-    /// A [`crate::capability::ComponentManifest`] for every registered
-    /// parser, derived from the `id`/`name`/`description` it already
-    /// carries — this is how parsers participate in the capability catalog.
-    /// See `crate::capability` module docs.
-    pub fn manifests(&self) -> Vec<crate::capability::ComponentManifest> {
-        self.parsers
-            .iter()
-            .map(|parser| {
-                crate::capability::ComponentManifest::new(
-                    format!("parser/{}", parser.id),
-                    crate::capability::ComponentKind::Parser,
-                    parser.name,
-                    parser.description,
-                )
-            })
-            .collect()
-    }
-
     /// Register a new parser.
     ///
     /// # Panics

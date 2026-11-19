@@ -1,8 +1,8 @@
 //! [`EntityRef`]: the thing a finding is about (a host, a user, an IP
 //! address, a device), named the same way whichever log mentioned it.
 //!
-//! Detection output ([`crate::processing::signal::Signal`],
-//! [`crate::processing::incident::Incident`]) lists the entities it
+//! Detection output ([`crate::processing::signal::Signal`]) lists the
+//! entities it
 //! concerns, so an application can add up what happened to each one (risk
 //! scoring), group findings by entity, or pivot from one to everything
 //! about it. This module only names and normalises entities; how risk or

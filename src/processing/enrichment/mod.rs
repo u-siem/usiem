@@ -15,7 +15,6 @@
 //! * **[Standard Types](types)** - Common enrichment data structures
 //! * **[Provider Interfaces](providers)** - External library integration points
 //! * **[Registry](registry)** - Dataset discovery and management
-//! * **[Manager](manager)** - Advanced dataset lifecycle and orchestration
 //! * **[Keys](keys)** - Strongly-typed dataset key definitions
 //!
 //! # Key Features
@@ -35,13 +34,13 @@
 //! ```rust,no_compile,no_run
 //! use usiem::processing::enrichment::*;
 //!
-//! // Create a dataset for user information
-//! let (user_dataset, _receiver) = MapDataset::<Text, UserProfile>::new();
+//! // Applications bring their own value type
+//! #[derive(Clone)]
+//! struct HostInfo { owner: Text, criticality: Criticality }
+//! let (hosts, _receiver) = MapDataset::<Text, HostInfo>::new();
 //!
-//! // Look up user information
-//! if let Some(user_info) = user_dataset.get(&username) {
-//!     println!("User {} is in department {}",
-//!              username, user_info.department.as_ref().unwrap());
+//! if let Some(host) = hosts.get(&hostname) {
+//!     println!("{} is owned by {}", hostname, host.owner);
 //! }
 //! ```
 //!
@@ -82,7 +81,6 @@ pub mod core;
 pub mod dataset;
 pub mod domain;
 pub mod keys;
-pub mod manager;
 pub mod providers;
 pub mod registry;
 pub mod types;
@@ -102,15 +100,7 @@ pub use dataset::{
     NetworkUpdate,
 };
 pub use domain::{DomainSet, normalize_domain};
-pub use keys::{AssetKey, GeoIpKey, ThreatIpKey, UserKey};
-pub use manager::{
-    DatasetBuilder, DatasetStatistics, EnrichmentManager, ManagedDataset, ManagerConfig,
-};
-pub use providers::{
-    // GeoIP framework
-    GeoIpDataset,
-    // Threat intelligence framework
-    ThreatIntelDataset,
-};
+pub use keys::GeoIpKey;
+pub use providers::GeoIpDataset;
 pub use registry::EnrichmentRegistry;
-pub use types::{AssetInfo, GeoIp, ThreatInfo, UserProfile};
+pub use types::GeoIp;
