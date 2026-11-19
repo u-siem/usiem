@@ -61,7 +61,7 @@
 //! }
 //! fn apply(event: &mut Event, value: Option<&FieldValue>) {
 //!     if let Some(name) = value {
-//!         event.add_field("source.domain".into(), name.clone());
+//!         event.add_field("source.domain", name.clone());
 //!     }
 //! }
 //!
@@ -74,7 +74,7 @@
 //!     Origin::from_hostname("fw"),
 //!     RawData::from_text("..."),
 //! );
-//! event.add_field("source.ip".into(), FieldValue::Str("192.0.2.7".into()));
+//! event.add_field("source.ip", FieldValue::Str("192.0.2.7".into()));
 //! assert!(matches!(pipeline.run(event), Outcome::Parked));
 //!
 //! // The host's async side would do this after awaiting the resolver.
@@ -1073,7 +1073,7 @@ mod tests {
             Origin::from_hostname("test"),
             RawData::from_text("line"),
         );
-        event.add_field("source.ip".into(), FieldValue::Str(ip.into()));
+        event.add_field("source.ip", FieldValue::Str(ip.into()));
         event
     }
 
@@ -1086,7 +1086,7 @@ mod tests {
 
     fn apply(event: &mut Event, value: Option<&FieldValue>) {
         if let Some(value) = value {
-            event.add_field("source.domain".into(), value.clone());
+            event.add_field("source.domain", value.clone());
         }
     }
 
@@ -1333,7 +1333,7 @@ mod tests {
     #[test]
     fn resumed_events_continue_in_the_next_segment() {
         fn tag(mut event: Event) -> ProcessResult {
-            event.add_field("seg_b".into(), FieldValue::Bool(true));
+            event.add_field("seg_b", FieldValue::Bool(true));
             ProcessResult::Continue(event)
         }
         let rdns = point(|s| s);

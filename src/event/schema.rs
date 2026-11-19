@@ -851,10 +851,10 @@ mod tests {
 
         let mut event = sample_event();
         event.add_field(
-            "client_ip".to_string(),
+            "client_ip",
             FieldValue::Ip(Ip::V4(Ipv4Addr::new(10, 0, 0, 1))),
         );
-        event.add_field("status_code".to_string(), FieldValue::Int(200));
+        event.add_field("status_code", FieldValue::Int(200));
 
         assert_eq!(schema.validate(&event), Ok(()));
     }
@@ -865,7 +865,7 @@ mod tests {
         schema.add_field("username", Schema::str_field().required().build());
 
         let mut event = sample_event();
-        event.add_field("username".to_string(), FieldValue::str("alice"));
+        event.add_field("username", FieldValue::str("alice"));
 
         let mut map = HashMap::new();
         map.insert("username".to_string(), FieldValue::str("alice"));
@@ -946,7 +946,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("user".to_string(), FieldValue::str("alice"));
+        event.add_field("user", FieldValue::str("alice"));
 
         assert_eq!(schema.validate(&event), Ok(()));
     }
@@ -957,7 +957,7 @@ mod tests {
         schema.add_field("status_code", Schema::int_field().required().build());
 
         let mut event = sample_event();
-        event.add_field("status_code".to_string(), FieldValue::str("not-a-number"));
+        event.add_field("status_code", FieldValue::str("not-a-number"));
 
         assert_eq!(
             schema.validate(&event),
@@ -975,11 +975,8 @@ mod tests {
         schema.add_field("username", Schema::str_field().required().build());
 
         let mut event = sample_event();
-        event.add_field("username".to_string(), FieldValue::str("alice"));
-        event.add_field(
-            "enrichment.geoip.country".to_string(),
-            FieldValue::str("US"),
-        );
+        event.add_field("username", FieldValue::str("alice"));
+        event.add_field("enrichment.geoip.country", FieldValue::str("US"));
 
         assert_eq!(schema.validate(&event), Ok(()));
     }
@@ -1011,7 +1008,7 @@ mod tests {
         let mut bad_user = HashMap::new();
         bad_user.insert(Text::from("id"), FieldValue::str("not-an-int"));
         let mut event = sample_event();
-        event.add_field("user".to_string(), FieldValue::Object(bad_user));
+        event.add_field("user", FieldValue::Object(bad_user));
 
         assert_eq!(
             schema.validate(&event),
@@ -1033,7 +1030,7 @@ mod tests {
 
         let mut event = sample_event();
         event.add_field(
-            "tags".to_string(),
+            "tags",
             FieldValue::Array(vec![FieldValue::str("ok"), FieldValue::Int(5)]),
         );
 
@@ -1061,15 +1058,15 @@ mod tests {
         );
 
         let mut string_port_event = sample_event();
-        string_port_event.add_field("port".to_string(), FieldValue::str("443"));
+        string_port_event.add_field("port", FieldValue::str("443"));
         assert_eq!(schema.validate(&string_port_event), Ok(()));
 
         let mut int_port_event = sample_event();
-        int_port_event.add_field("port".to_string(), FieldValue::Int(443));
+        int_port_event.add_field("port", FieldValue::Int(443));
         assert_eq!(schema.validate(&int_port_event), Ok(()));
 
         let mut bad_event = sample_event();
-        bad_event.add_field("port".to_string(), FieldValue::Bool(true));
+        bad_event.add_field("port", FieldValue::Bool(true));
         assert!(schema.validate(&bad_event).is_err());
     }
 
@@ -1085,11 +1082,11 @@ mod tests {
         );
 
         let mut good = sample_event();
-        good.add_field("request_id".to_string(), FieldValue::str("deadbeef"));
+        good.add_field("request_id", FieldValue::str("deadbeef"));
         assert_eq!(schema.validate(&good), Ok(()));
 
         let mut bad = sample_event();
-        bad.add_field("request_id".to_string(), FieldValue::str("not-hex!"));
+        bad.add_field("request_id", FieldValue::str("not-hex!"));
         assert!(schema.validate(&bad).is_err());
     }
 
@@ -1102,7 +1099,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("request_id".to_string(), FieldValue::str("anything"));
+        event.add_field("request_id", FieldValue::str("anything"));
 
         assert!(schema.validate(&event).is_err());
     }
@@ -1128,8 +1125,8 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("status_code".to_string(), FieldValue::Int(700));
-        event.add_field("username".to_string(), FieldValue::str("ab"));
+        event.add_field("status_code", FieldValue::Int(700));
+        event.add_field("username", FieldValue::str("ab"));
 
         let errors = schema.validate(&event).unwrap_err();
         assert_eq!(errors.len(), 2);
@@ -1141,7 +1138,7 @@ mod tests {
         schema.add_field("status_code", Schema::int_field().required().build());
 
         let mut event = sample_event();
-        event.add_field("status_code".to_string(), FieldValue::str("not-a-number"));
+        event.add_field("status_code", FieldValue::str("not-a-number"));
 
         let removed = schema.conform(&mut event);
 
@@ -1155,7 +1152,7 @@ mod tests {
         schema.add_field("status_code", Schema::int_field().required().build());
 
         let mut event = sample_event();
-        event.add_field("status_code".to_string(), FieldValue::Int(200));
+        event.add_field("status_code", FieldValue::Int(200));
 
         let removed = schema.conform(&mut event);
 
@@ -1185,10 +1182,7 @@ mod tests {
     fn conform_leaves_fields_not_declared_in_the_schema_untouched() {
         let schema = Schema::new("s", "1.0");
         let mut event = sample_event();
-        event.add_field(
-            "enrichment.geoip.country".to_string(),
-            FieldValue::str("US"),
-        );
+        event.add_field("enrichment.geoip.country", FieldValue::str("US"));
 
         let removed = schema.conform(&mut event);
 
@@ -1212,7 +1206,7 @@ mod tests {
         user_map.insert(Text::from("id"), FieldValue::str("not-an-int"));
         user_map.insert(Text::from("name"), FieldValue::str("alice"));
         let mut event = sample_event();
-        event.add_field("user".to_string(), FieldValue::Object(user_map));
+        event.add_field("user", FieldValue::Object(user_map));
 
         let removed = schema.conform(&mut event);
 
@@ -1236,7 +1230,7 @@ mod tests {
 
         let mut event = sample_event();
         event.add_field(
-            "tags".to_string(),
+            "tags",
             FieldValue::Array(vec![
                 FieldValue::str("ok"),
                 FieldValue::Int(5),
@@ -1271,7 +1265,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("status_code".to_string(), FieldValue::Int(999));
+        event.add_field("status_code", FieldValue::Int(999));
 
         let removed = schema.conform(&mut event);
 
@@ -1293,7 +1287,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("user".to_string(), FieldValue::str("alice"));
+        event.add_field("user", FieldValue::str("alice"));
 
         let removed = schema.conform(&mut event);
 
@@ -1311,7 +1305,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("user".to_string(), FieldValue::Int(5));
+        event.add_field("user", FieldValue::Int(5));
 
         let removed = schema.conform(&mut event);
 
@@ -1333,7 +1327,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("port".to_string(), FieldValue::Int(443));
+        event.add_field("port", FieldValue::Int(443));
 
         let removed = schema.conform(&mut event);
 
@@ -1355,7 +1349,7 @@ mod tests {
         );
 
         let mut event = sample_event();
-        event.add_field("port".to_string(), FieldValue::Bool(true));
+        event.add_field("port", FieldValue::Bool(true));
 
         let removed = schema.conform(&mut event);
 

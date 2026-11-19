@@ -279,38 +279,26 @@ impl Incident {
             Origin::from_hostname("usiem-correlation"),
             RawData::from_text(text),
         );
-        event.add_field("event_type".to_string(), FieldValue::str("incident"));
+        event.add_field("event_type", FieldValue::str("incident"));
+        event.add_field("incident.id", FieldValue::string(id.to_string()));
+        event.add_field("incident.rule_name", FieldValue::Str(self.rule_name));
+        event.add_field("incident.key", FieldValue::string(self.key));
+        event.add_field("incident.severity", FieldValue::str(self.severity.as_str()));
         event.add_field(
-            "incident.id".to_string(),
-            FieldValue::string(id.to_string()),
-        );
-        event.add_field(
-            "incident.rule_name".to_string(),
-            FieldValue::Str(self.rule_name),
-        );
-        event.add_field("incident.key".to_string(), FieldValue::string(self.key));
-        event.add_field(
-            "incident.severity".to_string(),
-            FieldValue::str(self.severity.as_str()),
-        );
-        event.add_field(
-            "incident.confidence".to_string(),
+            "incident.confidence",
             FieldValue::uint(self.confidence.as_percent() as u64),
         );
-        event.add_field("incident.techniques".to_string(), techniques_field);
-        event.add_field("incident.context".to_string(), context_field);
-        event.add_field("incident.message".to_string(), message_field);
-        event.add_field("incident.evidence".to_string(), evidence_field);
+        event.add_field("incident.techniques", techniques_field);
+        event.add_field("incident.context", context_field);
+        event.add_field("incident.message", message_field);
+        event.add_field("incident.evidence", evidence_field);
         if !self.entities.is_empty() {
             event.add_field(
-                "incident.entities".to_string(),
+                "incident.entities",
                 crate::processing::signal::entities_field(&self.entities),
             );
         }
-        event.add_field(
-            "incident.last_seen".to_string(),
-            FieldValue::Time(last_seen),
-        );
+        event.add_field("incident.last_seen", FieldValue::Time(last_seen));
         event
     }
 }

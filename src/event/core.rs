@@ -1,4 +1,4 @@
-use crate::event::field::{FieldValue, Timestamp};
+use crate::event::field::{FieldValue, Text, Timestamp};
 use crate::event::fields;
 use crate::event::hash::StableHasher;
 use crate::event::json::JsonValue;
@@ -31,7 +31,7 @@ pub struct Event {
     pub(crate) raw_data: RawData,
 
     /// Parsed field data extracted from the raw event
-    pub(crate) fields: HashMap<String, FieldValue>,
+    pub(crate) fields: HashMap<Text, FieldValue>,
 }
 
 impl Event {
@@ -72,14 +72,26 @@ impl Event {
     }
 
     /// Get the parsed field data
-    pub fn fields(&self) -> &HashMap<String, FieldValue> {
+    pub fn fields(&self) -> &HashMap<Text, FieldValue> {
         &self.fields
     }
 
-    /// Add a parsed field to this event
-    /// Note: This is for initial parsing only, not for transformations
-    pub fn add_field(&mut self, key: String, value: FieldValue) {
-        self.fields.insert(key, value);
+    /// Sets a field, replacing any previous value under the same key.
+    ///
+    /// Keys are [`Text`], so a literal key (`"user.name"`) or a short one
+    /// (up to 24 bytes) costs no allocation.
+    pub fn add_field(&mut self, key: impl Into<Text>, value: FieldValue) {
+        self.fields.insert(key.into(), value);
+    }
+
+    /// Removes a field, returning its value.
+    pub fn remove_field(&mut self, key: &str) -> Option<FieldValue> {
+        self.fields.remove(key)
+    }
+
+    /// Mutable access to one field's value.
+    pub fn get_field_mut(&mut self, key: &str) -> Option<&mut FieldValue> {
+        self.fields.get_mut(key)
     }
 
     /// Makes room for `additional` more fields, so a stage adding several
@@ -289,8 +301,8 @@ mod tests {
             RawData::from_text("test log"),
         );
 
-        event.add_field("event_type".to_string(), FieldValue::str("security"));
-        event.add_field("severity".to_string(), FieldValue::Int(3));
+        event.add_field("event_type", FieldValue::str("security"));
+        event.add_field("severity", FieldValue::Int(3));
 
         assert_eq!(
             event.get_field("event_type"),
@@ -358,10 +370,7 @@ mod tests {
         );
         assert_eq!(event.recorded_id(), None);
         assert_eq!(event.stored_or_computed_id(), event.id());
-        event.add_field(
-            fields::EVENT_ID.to_string(),
-            FieldValue::str("00000000000000ff"),
-        );
+        event.add_field(fields::EVENT_ID, FieldValue::str("00000000000000ff"));
         assert_eq!(event.recorded_id(), Some(EventId::from_u64(0xff)));
         assert_eq!(event.stored_or_computed_id(), EventId::from_u64(0xff));
     }
@@ -472,7 +481,7 @@ mod tests {
         let origin = Origin::from_ip(Ip::V4(Ipv4Addr::new(10, 0, 0, 1)));
         let raw_data = RawData::from_json(JsonValue::from(serde_data));
         let mut event = Event::new(Timestamp::now(), Timestamp::now(), origin, raw_data);
-        event.add_field("severity".to_string(), FieldValue::Int(9));
+        event.add_field("severity", FieldValue::Int(9));
 
         let event_roundtrip: Event =
             serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();

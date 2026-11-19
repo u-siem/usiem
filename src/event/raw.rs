@@ -60,11 +60,8 @@ impl RawEvent {
             origin,
             RawData::Text(self.log_text),
         );
-        // Add the parsed fields
-        for (key, value) in self.fields {
-            event.add_field(key.to_string(), value);
-        }
-
+        // Same map type on both sides: moved, not rebuilt.
+        event.fields = self.fields;
         event
     }
 

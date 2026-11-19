@@ -84,10 +84,7 @@ fn tag_internal_ip(mut event: Event) -> ProcessResult {
         .and_then(|f| f.as_str())
         .map(|ip| ip.starts_with("10.") || ip.starts_with("192.168."))
         .unwrap_or(false);
-    event.add_field(
-        "client.ip.is_internal".to_string(),
-        FieldValue::Bool(is_internal),
-    );
+    event.add_field("client.ip.is_internal", FieldValue::Bool(is_internal));
     ProcessResult::Continue(event)
 }
 

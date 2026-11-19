@@ -1,6 +1,6 @@
 use crate::event::Origin;
 use crate::event::core::{Event, RawData};
-use crate::event::field::{FieldValue, Ip, Timestamp};
+use crate::event::field::{FieldValue, Ip, Text, Timestamp};
 use crate::event::json::JsonValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
@@ -267,7 +267,7 @@ impl<'de> Deserialize<'de> for Event {
                 let mut original_time: Option<Timestamp> = None;
                 let mut origin: Option<Origin> = None;
                 let mut raw_data: Option<RawData> = None;
-                let mut fields: Option<HashMap<String, FieldValue>> = None;
+                let mut fields: Option<HashMap<Text, FieldValue>> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -322,10 +322,10 @@ mod tests {
             Origin::from_ip(Ip::V4(Ipv4Addr::new(10, 0, 0, 1))),
             RawData::from_text("raw log line"),
         );
-        event.add_field("event_type".to_string(), FieldValue::str("authentication"));
-        event.add_field("severity".to_string(), FieldValue::Int(8));
+        event.add_field("event_type", FieldValue::str("authentication"));
+        event.add_field("severity", FieldValue::Int(8));
         event.add_field(
-            "tags".to_string(),
+            "tags",
             FieldValue::Array(vec![FieldValue::str("suspicious"), FieldValue::Bool(true)]),
         );
 

@@ -92,7 +92,7 @@ fn sample_event(ip: &str) -> Event {
         Origin::from_hostname("test-host"),
         RawData::from_text("suspicious connection"),
     );
-    event.add_field("client.ip".to_string(), FieldValue::string(ip.to_string()));
+    event.add_field("client.ip", FieldValue::string(ip.to_string()));
     event
 }
 

@@ -398,26 +398,14 @@ impl ActionOutcome {
             Origin::from_hostname("usiem-action"),
             RawData::from_text(text),
         );
-        event.add_field("event_type".to_string(), FieldValue::str("action"));
+        event.add_field("event_type", FieldValue::str("action"));
+        event.add_field("action.name", FieldValue::string(name.to_string()));
+        event.add_field("action.provider", FieldValue::string(provider.to_string()));
+        event.add_field("action.status", FieldValue::str(self.status.as_str()));
+        event.add_field("action.message", self.message.to_field_value());
+        event.add_field("action.data", FieldValue::Object(self.data.into_map()));
         event.add_field(
-            "action.name".to_string(),
-            FieldValue::string(name.to_string()),
-        );
-        event.add_field(
-            "action.provider".to_string(),
-            FieldValue::string(provider.to_string()),
-        );
-        event.add_field(
-            "action.status".to_string(),
-            FieldValue::str(self.status.as_str()),
-        );
-        event.add_field("action.message".to_string(), self.message.to_field_value());
-        event.add_field(
-            "action.data".to_string(),
-            FieldValue::Object(self.data.into_map()),
-        );
-        event.add_field(
-            "action.params".to_string(),
+            "action.params",
             FieldValue::Object(params.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
         );
         event
@@ -690,62 +678,44 @@ impl ActionRegistry {
                 descriptor.name, ctx.principal.id
             )),
         );
-        event.add_field("event_type".to_string(), FieldValue::str("action_audit"));
+        event.add_field("event_type", FieldValue::str("action_audit"));
+        event.add_field("action.name", FieldValue::string(descriptor.name.clone()));
         event.add_field(
-            "action.name".to_string(),
-            FieldValue::string(descriptor.name.clone()),
-        );
-        event.add_field(
-            "action.provider".to_string(),
+            "action.provider",
             FieldValue::string(descriptor.provider.clone()),
         );
         event.add_field(
-            "principal.id".to_string(),
+            "principal.id",
             FieldValue::string(ctx.principal.id.to_string()),
         );
         event.add_field(
-            "principal.kind".to_string(),
+            "principal.kind",
             FieldValue::string(format!("{:?}", ctx.principal.kind).to_lowercase()),
         );
-        event.add_field(
-            "request.id".to_string(),
-            FieldValue::string(ctx.request_id.to_string()),
-        );
+        event.add_field("request.id", FieldValue::string(ctx.request_id.to_string()));
         if let Some(tenant) = &ctx.tenant {
-            event.add_field(
-                "tenant.id".to_string(),
-                FieldValue::string(tenant.to_string()),
-            );
+            event.add_field("tenant.id", FieldValue::string(tenant.to_string()));
         }
         if let Some(reason) = &ctx.reason {
-            event.add_field(
-                "action.reason".to_string(),
-                FieldValue::string(reason.to_string()),
-            );
+            event.add_field("action.reason", FieldValue::string(reason.to_string()));
         }
         let decision_str = match decision {
             Decision::Allow => "allow",
             Decision::Deny(_) => "deny",
             Decision::RequireApproval(_) => "require_approval",
         };
-        event.add_field("authz.decision".to_string(), FieldValue::str(decision_str));
+        event.add_field("authz.decision", FieldValue::str(decision_str));
         event.add_field(
-            "action.params".to_string(),
+            "action.params",
             FieldValue::Object(params.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
         );
         match result {
             Ok(outcome) => {
-                event.add_field(
-                    "action.status".to_string(),
-                    FieldValue::str(outcome.status.as_str()),
-                );
+                event.add_field("action.status", FieldValue::str(outcome.status.as_str()));
             }
             Err(err) => {
-                event.add_field("action.status".to_string(), FieldValue::str("error"));
-                event.add_field(
-                    "action.error".to_string(),
-                    FieldValue::string(err.to_string()),
-                );
+                event.add_field("action.status", FieldValue::str("error"));
+                event.add_field("action.error", FieldValue::string(err.to_string()));
             }
         }
         event

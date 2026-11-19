@@ -21,7 +21,7 @@
 //!     Origin::Collector("demo".into()),
 //!     RawData::from_text(""),
 //! );
-//! event.add_field(fields::USER_NAME.to_string(), FieldValue::from("alice"));
+//! event.add_field(fields::USER_NAME, FieldValue::from("alice"));
 //! assert!(event.get_field(fields::USER_NAME).is_some());
 //! ```
 

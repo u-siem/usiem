@@ -294,7 +294,7 @@ impl Signal {
             Origin::from_hostname("usiem-correlation"),
             RawData::from_text(text),
         );
-        event.add_field("event_type".to_string(), FieldValue::str("signal"));
+        event.add_field("event_type", FieldValue::str("signal"));
         for (key, value) in fields {
             event.add_field(format!("signal.{key}"), value);
         }

@@ -22,7 +22,7 @@
 //!
 //! fn tag_high_severity(mut event: Event) -> ProcessResult {
 //!     let is_high = matches!(event.get_field("severity"), Some(FieldValue::Int(n)) if *n >= 8);
-//!     event.add_field("severity.is_high".to_string(), FieldValue::Bool(is_high));
+//!     event.add_field("severity.is_high", FieldValue::Bool(is_high));
 //!     ProcessResult::Continue(event)
 //! }
 //!
@@ -39,7 +39,7 @@
 //!     Origin::from_hostname("host1"),
 //!     RawData::from_text("raw log"),
 //! );
-//! event.add_field("severity".to_string(), FieldValue::Int(9));
+//! event.add_field("severity", FieldValue::Int(9));
 //!
 //! match pipeline.run(event) {
 //!     ProcessResult::Continue(event) => {
@@ -214,7 +214,7 @@ mod tests {
     }
 
     fn add_marker(mut event: Event) -> ProcessResult {
-        event.add_field("marker".to_string(), FieldValue::str("seen"));
+        event.add_field("marker", FieldValue::str("seen"));
         ProcessResult::Continue(event)
     }
 
